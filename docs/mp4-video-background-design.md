@@ -1,9 +1,24 @@
 # MP4 动态背景设计草案
 
-状态：**草案，未实现**。本文只定义契约、校验、渲染、性能与发布边界，不包含产品代码。
+状态：**核心实现已落地**（契约、校验、双端导入与渲染路径）；Phase 0 实机探针、Studio/服务端与原生开关仍待完成。
 目标版本：客户端 `v1.6.0`，主题契约 `Skin API 2`。
 最后更新：2026-10-23。
 相关文档：`docs/compat-profile-design.md`、`docs/theme-management.md`、`AGENTS.md`。
+## 实现状态（2026-10-23）
+
+已落地：
+
+- `theme.json schemaVersion 2`、`manifest.json skinApiVersion 2`、`video` 能力与 `background.mp4` 文件注册。
+- `runtime/mp4-metadata.mjs` 有界结构解析器与稳定错误码；Windows / macOS 校验器、导入路径和运行时都使用同一份实现。
+- 双端 injector 读取视频、计算 `videoKey`，并通过 `Runtime.callFunctionOn` 传递字节；`--check-payload` 不连接 CDP 即可校验。
+- 渲染层支持任务页主表面、首页 hero、宽图 `body` 三个挂载点；海报回退、可视性暂停、减少动态效果、清理和 Blob 撤销已接入。
+- 主题偏好支持全局 `videoBackground` 与每主题 `videoPaused`（读取层已接入；原生设置 UI 尚未添加）。
+
+待完成：
+
+- Phase 0 真机探针：CSP `media-src blob:`、Codex Electron 的 H.264 解码、16 MiB `callFunctionOn` 耗时、三种挂载点的真实视觉对比。
+- 原生主题管理器中的动态背景开关；Studio 的 MP4 上传/预检/导出；dreamskin.cc 服务端与 Gallery 的 API 2 校验。
+- 客户端版本提升到 1.6.0、发布说明与双端真实安装包冒烟。
 
 ## 0. 结论
 
@@ -203,7 +218,7 @@ ZIP 内视频允许 store 或 deflate；MP4 本身几乎不可压缩，压缩方
 | 维度 | 允许 | 拒绝 |
 | --- | --- | --- |
 | 容器 | ISO BMFF / MP4（`ftyp` 主品牌 `isom`、`mp42`、`M4V `） | QuickTime `qt  `、HEIF、WebM、裸 H.264 流 |
-| 分片 | 单文件、非分片、`moov` 在 `mdat` 之前（faststart） | `moof` / `mfra` / 分片 MP4 |
+| 分片 | 单文件、非分片；`moov` 可位于 `mdat` 之后，但自身 ≤2 MiB | `moof` / `mfra` / 分片 MP4 |
 | 轨道 | 恰好 1 条 `vide` 轨 | 0 条或多条视频轨；任何 `soun` / `subtit` / `text` / `meta` 轨 |
 | 样本格式 | `avc1` | `avc3`、`hev1`、`hvc1`、`vp09`、`av01`、`encv` |
 | Profile | H.264 Baseline / Main / High（`profile_idc` 66 / 77 / 100） | High 10、High 4:2:2、High 4:4:4 等 10-bit / 高位深 |
@@ -218,8 +233,8 @@ ZIP 内视频允许 store 或 deflate；MP4 本身几乎不可压缩，压缩方
 新增 `runtime/mp4-metadata.mjs`，只做结构解析，不解码：
 
 1. 读取文件头，校验 `ftyp`，记录主品牌与兼容品牌。
-2. 遍历顶层 box，最多 4096 个，深度最多 4 层；每个 box 的 `size` 必须在文件范围内，拒绝 64 位长度溢出。
-3. 要求 `moov` 在前 2 MiB 内完整出现；超出即拒绝。这个上限足以覆盖 1080p/20 秒的正常 faststart 文件，同时把解析成本钉死。
+2. 遍历顶层 box，最多 4096 个，深度最多 8 层；每个 box 的 `size` 必须在文件范围内，拒绝 64 位长度溢出。
+3. 要求 `moov` 存在且自身不超过 2 MiB；不要求 faststart，因为播放时整段视频已经作为 Blob 在内存中。
 4. 解析 `mvhd` 的 `timescale` / `duration`，计算总时长。
 5. 解析每条 `trak` 的 `tkhd`（按 version 0/1 处理偏移）、`mdia/hdlr` 的 handler、`mdia/minf/stbl/stsd` 的样本格式。
 6. 对 `avc1` 读取 `avcC` 的 `profile_idc`、`profile_compatibility`、`level_idc`，拒绝高位深 profile。
@@ -243,7 +258,7 @@ ZIP 内视频允许 store 或 deflate；MP4 本身几乎不可压缩，压缩方
 | `video.size` | 超过 16 MiB |
 | `video.ftyp` | 不是允许的 MP4 品牌 |
 | `video.fragmented` | 分片 MP4 |
-| `video.moov` | `moov` 缺失、位置过深或在 2 MiB 之外 |
+| `video.moov` | `moov` 缺失或自身超过 2 MiB |
 | `video.track_count` | 视频轨数量不为 1 |
 | `video.audio_track` | 存在音轨 |
 | `video.extra_track` | 存在字幕、文本或数据轨 |
@@ -277,7 +292,7 @@ ffmpeg -i input.mov \
 
 - `-an` 去掉音轨。
 - `-pix_fmt yuv420p` 保证 8-bit 4:2:0。
-- `-movflags +faststart` 把 `moov` 放到文件头。
+- `-movflags +faststart` 把 `moov` 放到文件头；这是推荐但不是客户端要求。
 - 20 秒、6 Mbps 上限，16 MiB 内基本能保证画质。
 - 海报从首帧导出，分辨率与视频一致，保持同一构图。
 
@@ -308,7 +323,7 @@ ffmpeg -i input.mov \
 4. 页面内 `__dreamSkinAttachVideo()`：
 
    - 如果 `state.videoKey === meta.key` 且节点仍存在，直接返回 `{ reused: true }`，避免重载时重启播放。
-   - `atob` 分块转 `Uint8Array`，或 `fetch(dataUrl)` 异步转 `Blob`；优先 `fetch`，避免主线程长时间 `atob`。
+   - `atob` 转 `Uint8Array` 后组装 `Blob`，与现有海报管线一致；不使用 `fetch(dataUrl)`，避免受渲染进程 CSP `connect-src` 影响。
    - `URL.createObjectURL(blob)`，创建 `<video>`，等待 `loadeddata` / `readyState >= 2`。
    - 成功后淡入，撤销旧 URL，写入 `state.videoKey`。
    - 失败返回 `{ fallback: true, code }`，保留海报。
@@ -498,7 +513,7 @@ ffmpeg -i input.mov \
 10. 16 MiB 边界：恰好通过，+1 字节拒绝。
 11. 空文件、截断文件、随机字节改成 `.mp4`。
 12. `ftyp` 错误、QuickTime、WebM、裸流。
-13. `moov` 在 `mdat` 之后、`moov` 超出前 2 MiB、分片 `moof`。
+13. `moov` 缺失或自身超过 2 MiB、分片 `moof`；`moov` 位于 `mdat` 之后应通过。
 14. box 长度溢出、嵌套过深、box 数量超限。
 15. 0/2 条视频轨、音轨、字幕轨、数据轨。
 16. `avc3` / `hev1` / `hvc1` / `vp09` / `av01` / `encv`。
@@ -632,10 +647,10 @@ example-night/
 parseMp4(bytes):
   require bytes.length in [1, 16 MiB]
   require ftyp at offset 0; brand in {isom, mp42, M4V }
-  scan top-level boxes up to 2 MiB:
+  scan top-level boxes:
     reject moof/mfra
-    record moov, mdat order
-  require moov before mdat and moov fully inside 2 MiB
+    locate moov and mdat (order is not significant)
+  require moov size <= 2 MiB
   read mvhd -> timescale, duration
   for each trak:
     read tkhd -> width, height (version-aware offsets)

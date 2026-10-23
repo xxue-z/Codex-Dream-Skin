@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { readThemeTransparency, themePreferencesPath } from "../runtime/theme-preferences.mjs";
+import { readThemeTransparency, readThemeVideoPreference, themePreferencesPath } from "../runtime/theme-preferences.mjs";
 import * as mac from "../macos/scripts/injector.mjs";
 import * as windows from "../windows/scripts/injector.mjs";
 
@@ -31,6 +31,15 @@ try {
     await fs.writeFile(preferencesPath, invalid);
     assert.equal(await readThemeTransparency("test", options), undefined);
   }
+  await write({ test: { transparency: 30 } });
+  assert.deepEqual(await readThemeVideoPreference("test", options), { enabled: true, paused: false });
+  await fs.writeFile(preferencesPath, JSON.stringify({
+    schemaVersion: 1,
+    videoBackground: false,
+    themes: { test: { transparency: 30, videoPaused: true } },
+  }));
+  assert.deepEqual(await readThemeVideoPreference("test", options), { enabled: false, paused: true });
+  assert.deepEqual(await readThemeVideoPreference("absent", options), { enabled: false, paused: false });
   assert.ok(warnings.length > 0);
   assert.ok(warnings.every((message) => !message.includes("DO_NOT_LOG")));
   const themeDir = path.join(temp, "theme");

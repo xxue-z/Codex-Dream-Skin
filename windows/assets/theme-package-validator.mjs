@@ -7,6 +7,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { decodeAndValidateSafeCss } from "./safe-css-validator.mjs";
+import { Mp4ValidationError, readMp4Metadata } from "./mp4-metadata.mjs";
 
 const LIMITS = Object.freeze({
   manifest: 65_536,
@@ -14,6 +15,7 @@ const LIMITS = Object.freeze({
   simpleTheme: 1_048_576,
   css: 262_144,
   image: 10_485_760,
+  video: 16_777_216,
   license: 65_536,
   signature: 4_096,
 });
@@ -26,6 +28,7 @@ const BACKGROUND_MEDIA = new Map([
 const PAYLOAD_MEDIA = new Map([
   ["theme.json", "application/json"],
   ...BACKGROUND_MEDIA,
+  ["background.mp4", "video/mp4"],
   ["theme.css", "text/css"],
   ["LICENSE.txt", "text/plain"],
 ]);
@@ -206,6 +209,7 @@ function expectedLimit(name, simple = false) {
   if (name === "theme.css") return LIMITS.css;
   if (name === "LICENSE.txt") return LIMITS.license;
   if (name === "manifest.sig") return LIMITS.signature;
+  if (name === "background.mp4") return LIMITS.video;
   if (BACKGROUND_MEDIA.has(name) || /\.(?:png|jpe?g|webp)$/i.test(name)) return LIMITS.image;
   return 0;
 }
@@ -287,15 +291,15 @@ function validateTimestamp(value) {
   }
 }
 
-function validateOfficialTheme(value) {
+function validateOfficialTheme(value, skinApiVersion) {
   const theme = assertObject(value, "theme.json");
-  assertExactKeys(
-    theme,
-    THEME_REQUIRED,
-    [...THEME_COPY_KEYS, "promoUrl", "appearance", "art", "colors"],
-    "theme.json",
-  );
-  if (theme.schemaVersion !== 1) fail("theme.json must use schemaVersion 1");
+  const optional = [...THEME_COPY_KEYS, "promoUrl", "appearance", "art", "colors"];
+  if (skinApiVersion === 2) optional.push("video");
+  assertExactKeys(theme, THEME_REQUIRED, optional, "theme.json");
+  const expectedSchema = skinApiVersion === 2 ? 2 : 1;
+  if (theme.schemaVersion !== expectedSchema) {
+    fail(`theme.json must use schemaVersion ${expectedSchema} with Skin API ${skinApiVersion}`);
+  }
   assertString(theme.id, "theme.json.id", { min: 3, max: 64, pattern: THEME_ID_PATTERN, controls: null });
   assertString(theme.name, "theme.json.name", { min: 1, max: 80 });
   assertString(theme.image, "theme.json.image", { min: 1, max: 32, controls: null });
@@ -334,6 +338,13 @@ function validateOfficialTheme(value) {
       });
     }
   }
+  if (skinApiVersion === 2 && theme.video !== undefined) {
+    const video = assertObject(theme.video, "theme.json.video");
+    assertExactKeys(video, ["file"], [], "theme.json.video");
+    if (video.file !== "background.mp4") {
+      fail("theme.json.video.file must be background.mp4");
+    }
+  }
   return theme;
 }
 
@@ -341,7 +352,10 @@ function validateManifest(value, platform, clientVersion) {
   const manifest = assertObject(value, "manifest.json");
   assertExactKeys(manifest, MANIFEST_REQUIRED, ["keyId"], "manifest.json");
   if (manifest.packageVersion !== 1) fail("manifest.json must use packageVersion 1");
-  if (manifest.skinApiVersion !== 1) fail("manifest.json requires an unsupported Skin API version");
+  if (manifest.skinApiVersion !== 1 && manifest.skinApiVersion !== 2) {
+    fail("manifest.json requires an unsupported Skin API version");
+  }
+  const skinApiVersion = manifest.skinApiVersion;
   assertString(manifest.themeId, "manifest.themeId", {
     min: 3,
     max: 64,
@@ -354,6 +368,9 @@ function validateManifest(value, platform, clientVersion) {
   if (compareSemver(requiredClient, installedClient) > 0) {
     fail(`Theme requires Dream Skin ${manifest.minClientVersion} or newer; installed version is ${clientVersion}`);
   }
+  if (skinApiVersion === 2 && compareSemver(requiredClient, parseSemver("1.6.0", "Skin API 2 minimum client")) < 0) {
+    fail("Skin API 2 themes must require Dream Skin 1.6.0 or newer");
+  }
   const platforms = assertStringSet(manifest.platforms, "manifest.platforms", {
     min: 1,
     max: 2,
@@ -362,9 +379,12 @@ function validateManifest(value, platform, clientVersion) {
   if (!platforms.has(platform)) fail(`Theme package does not support ${platform}`);
   const capabilities = assertStringSet(manifest.capabilities, "manifest.capabilities", {
     min: 1,
-    max: 3,
-    allowed: new Set(["background", "tokens", "safe-css"]),
+    max: 4,
+    allowed: new Set(["background", "tokens", "safe-css", "video"]),
   });
+  if (skinApiVersion === 1 && capabilities.has("video")) {
+    fail("Skin API 1 does not support the video capability");
+  }
 
   const publisher = assertObject(manifest.publisher, "manifest.publisher");
   assertExactKeys(publisher, ["id", "displayName"], [], "manifest.publisher");
@@ -432,7 +452,14 @@ function validateManifest(value, platform, clientVersion) {
   if (!files.has("theme.css")) {
     fail("New official theme imports require theme.css and the safe-css capability");
   }
-  return { manifest, files, background: backgrounds[0] };
+  return {
+    manifest,
+    files,
+    background: backgrounds[0],
+    video: files.has("background.mp4") ? "background.mp4" : null,
+    skinApiVersion,
+    capabilities,
+  };
 }
 
 function setsEqual(left, right) {
@@ -466,7 +493,7 @@ async function validateOfficial(root, names, platform, clientVersion) {
   if (!names.includes("manifest.json")) fail("Official theme package is missing manifest.json");
   const bytes = new Map();
   for (const name of names) bytes.set(name, await readStableFile(root, name, expectedLimit(name)));
-  const { manifest, files, background } = validateManifest(
+  const { manifest, files, background, video, skinApiVersion, capabilities } = validateManifest(
     decodeJson(bytes.get("manifest.json"), "manifest.json"),
     platform,
     clientVersion,
@@ -481,16 +508,42 @@ async function validateOfficial(root, names, platform, clientVersion) {
     if (data.length !== entry.bytes) fail(`${name} byte length does not match manifest.json`);
     if (sha256(data) !== entry.sha256) fail(`${name} SHA-256 does not match manifest.json`);
   }
-  const theme = validateOfficialTheme(decodeJson(bytes.get("theme.json"), "theme.json"));
+  const theme = validateOfficialTheme(
+    decodeJson(bytes.get("theme.json"), "theme.json"),
+    skinApiVersion,
+  );
   if (manifest.themeId !== theme.id) fail("manifest.themeId does not match theme.json id");
+  const declaredVideo = theme.video !== undefined;
+  if (declaredVideo !== Boolean(video)) {
+    fail("theme.json video declaration must match the background.mp4 file");
+  }
+  if (declaredVideo !== capabilities.has("video")) {
+    fail("theme.json video declaration must match the video capability");
+  }
+  if (skinApiVersion === 1 && video) {
+    fail("Skin API 1 packages must not contain background.mp4");
+  }
   if (theme.image !== background) fail("theme.json image does not match the manifest background file");
   if (detectedImageMedia(bytes.get(background)) !== BACKGROUND_MEDIA.get(background)) {
     fail(`${background} content does not match its extension and mediaType`);
+  }
+  let videoMetadata = null;
+  if (video) {
+    try {
+      videoMetadata = readMp4Metadata(bytes.get(video));
+    } catch (error) {
+      if (error instanceof Mp4ValidationError) {
+        fail(`${video} rejected (${error.code}): ${error.message}`);
+      }
+      throw error;
+    }
   }
   decodeAndValidateSafeCss(bytes.get("theme.css"));
   return {
     format: "official",
     image: background,
+    video,
+    videoMetadata,
     safeCssStatus: "validated",
     signatureIgnored: bytes.has("manifest.sig"),
     bytes,
@@ -536,24 +589,35 @@ async function validateSimple(root, names) {
   };
 }
 
-async function main() {
-  const args = parseArguments(process.argv.slice(2));
-  const source = await resolveDirectory(args.source, "Theme package source");
-  const stage = await resolveDirectory(args.stage, "Theme package stage", true);
-  const names = await sourceFileNames(source);
+export async function validateThemePackage({ source, stage, platform, clientVersion }) {
+  const sourceDir = await resolveDirectory(source, "Theme package source");
+  const stageDir = await resolveDirectory(stage, "Theme package stage", true);
+  const names = await sourceFileNames(sourceDir);
   const result = names.includes("manifest.json")
-    ? await validateOfficial(source, names, args.platform, args["client-version"])
-    : await validateSimple(source, names);
+    ? await validateOfficial(sourceDir, names, platform, clientVersion)
+    : await validateSimple(sourceDir, names);
   for (const [name, bytes] of result.bytes) {
-    await fs.writeFile(path.join(stage, name), bytes, { flag: "wx", mode: 0o600 });
-    await fs.chmod(path.join(stage, name), 0o600);
+    await fs.writeFile(path.join(stageDir, name), bytes, { flag: "wx", mode: 0o600 });
+    await fs.chmod(path.join(stageDir, name), 0o600);
   }
   return {
     format: result.format,
     image: result.image,
+    video: result.video ?? null,
+    videoMetadata: result.videoMetadata ?? null,
     safeCssStatus: result.safeCssStatus,
     signatureIgnored: result.signatureIgnored,
   };
+}
+
+async function main() {
+  const args = parseArguments(process.argv.slice(2));
+  return validateThemePackage({
+    source: args.source,
+    stage: args.stage,
+    platform: args.platform,
+    clientVersion: args["client-version"],
+  });
 }
 
 if (path.resolve(process.argv[1] || "") === path.resolve(scriptPath)) {

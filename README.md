@@ -169,13 +169,13 @@ For themes from DreamSkin.cc, prefer [one-click apply](#theme-library--community
 
 Choose **Import Theme ZIP…** from the macOS menu bar app or the Windows tray. Only ordinary `.zip` files are accepted; the legacy `.dreamskin` extension is not supported, and renaming the suffix is not a supported migration path.
 
-An official Studio pack contains `manifest.json`, `theme.json`, `theme.css` and exactly one `background.webp|jpg|png`, plus optional `LICENSE.txt` and the reserved `manifest.sig`. Put these files at the ZIP root or inside exactly one top-level theme folder. The importer verifies platform and minimum-client compatibility plus every declared payload file's byte length and SHA-256. `theme.css` must pass the local Safe CSS validator and can affect only the 12 registered parts; it is revalidated on every import and apply. `manifest.sig` is not used for signature verification.
+An official Studio pack contains `manifest.json`, `theme.json`, `theme.css` and exactly one `background.webp|jpg|png`, plus optional `LICENSE.txt` and the reserved `manifest.sig`. Put these files at the ZIP root or inside exactly one top-level theme folder. The importer verifies platform and minimum-client compatibility plus every declared payload file's byte length and SHA-256. `theme.css` must pass the local Safe CSS validator and can affect only the 12 registered parts; it is revalidated on every import and apply. `manifest.sig` is not used for signature verification. A Skin API 2 pack may also carry one optional `background.mp4` dynamic background (H.264, no audio, 2-20 s, up to 1920x1080, 16 MiB); it still needs the matching poster and `theme.css`, and requires client 1.6.0 or newer. Older clients reject the API 2 pack explicitly.
 
 The local simplified ZIP must contain exactly non-empty `theme.json`, non-empty `theme.css`, and its referenced image. That format has no official manifest integrity or compatibility declaration and should come from a trusted source. Limits are 32 MiB per archive, 32 entries, and 64 MiB expanded.
 
 Import adds the pack to **Saved Themes** without changing the active theme. Identical content is not duplicated. A newer pack with the same ID updates the saved theme in place after the old directory identity is confirmed, and only legacy `-2`/`-3` directories with an identical semantic fingerprint are cleaned up. If the existing directory identity cannot be confirmed, import fails closed instead of overwriting it; names alone are never used to delete another theme.
 
-**Manual fallback** — extract the archive and move the complete directory containing `theme.json`, `theme.css` and its image into the saved-theme folder:
+**Manual fallback** — extract the archive and move the complete directory containing `theme.json`, `theme.css` and its image (plus `background.mp4` for a dynamic theme) into the saved-theme folder:
 
 - macOS: `~/Library/Application Support/CodexDreamSkinStudio/themes/`
 - Windows: `%LOCALAPPDATA%\CodexDreamSkin\themes\`

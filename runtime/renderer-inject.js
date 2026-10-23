@@ -1,5 +1,5 @@
 // Canonical cross-platform renderer. Run tools/sync-runtime-assets.mjs after editing.
-((cssText, artDataUrl, themeConfig) => {
+((cssText, artDataUrl, themeConfig, videoMeta) => {
   const SELECTOR_CONTRACT = __DREAM_SKIN_SELECTORS_JSON__;
   const STATE_KEY = "__CODEX_DREAM_SKIN_STATE__";
   const DISABLED_KEY = "__CODEX_DREAM_SKIN_DISABLED__";
@@ -20,7 +20,7 @@
     "data-dream-skin", SHELL_ATTR, "data-dream-upload-alpha",
     "data-dream-art-wide", "data-dream-art-safe", "data-dream-task-mode",
     "data-dream-art-safe-area", "data-dream-art-task-mode", "data-dream-art-aspect",
-    "data-dream-art-ready",
+    "data-dream-art-ready", "data-dream-video",
   ];
   const initialRoute = new URLSearchParams(String(location.search || ""))
     .get("initialRoute") || "";
@@ -68,6 +68,10 @@
   const ART = THEME.art && typeof THEME.art === "object" ? THEME.art : {};
   const ART_METADATA = THEME.artMetadata && typeof THEME.artMetadata === "object"
     ? THEME.artMetadata : null;
+  const VIDEO = videoMeta && typeof videoMeta === "object"
+    && typeof videoMeta.key === "string" && videoMeta.mime === "video/mp4"
+    ? { key: videoMeta.key, mime: "video/mp4", bytes: Number(videoMeta.bytes) || 0 }
+    : null;
   const ANALYSIS_CACHE_KEY = "__CODEX_DREAM_SKIN_ANALYSIS_CACHE__";
   const THEME_VARIABLES = [
     "--ds-upload-panel-alpha", "--ds-upload-bg-alpha", "--ds-upload-panel-alt-alpha",
@@ -105,6 +109,11 @@
   window[ANALYSIS_CACHE_KEY] = analysisCache;
   let artAnalysis = typeof THEME.artKey === "string" ? analysisCache.get(THEME.artKey) ?? null : null;
   let analysisTimer = null;
+  let videoState = null;
+  let videoVisibilityHandler = null;
+  let videoMotionQuery = null;
+  let videoMotionHandler = null;
+  let videoFocusHandler = null;
   let rootObserver = null;
   let partObserver = null;
   let bodyReadyHandler = null;
@@ -965,6 +974,273 @@
     return scope;
   };
 
+  const videoPreferenceEnabled = () => THEME.videoEnabled !== false && THEME.videoPaused !== true;
+  const reducedMotionQuery = () => {
+    try {
+      return typeof window.matchMedia === "function"
+        ? window.matchMedia("(prefers-reduced-motion: reduce)") : null;
+    } catch {
+      return null;
+    }
+  };
+  const reducedMotion = () => Boolean(reducedMotionQuery()?.matches);
+  const videoOnHome = () => {
+    const state = window[STATE_KEY];
+    if (state?.scope?.baseState) return state.scope.baseState === "home";
+    return Boolean(document.querySelector?.('[data-ds-part="home"]'));
+  };
+  const videoTaskOff = () => {
+    const root = document.documentElement;
+    const value = root?.getAttribute("data-dream-task-mode") ||
+      root?.getAttribute("data-dream-art-task-mode");
+    return value === "off";
+  };
+  const videoMountTarget = () => {
+    const root = document.documentElement;
+    if (!root) return null;
+    if (root.getAttribute("data-dream-art-wide") === "true") {
+      return document.body ? { target: document.body, mode: "wide" } : null;
+    }
+    if (videoOnHome()) {
+      const hero = document.querySelector?.('[data-ds-part="home-hero"]');
+      if (hero) return { target: hero, mode: "home" };
+    }
+    const main = document.querySelector?.('[data-ds-part="main"]');
+    return main ? { target: main, mode: "main" } : null;
+  };
+  const styleVideoLayer = (layer, mode) => {
+    layer.style.position = mode === "wide" ? "fixed" : "absolute";
+    layer.style.inset = "0";
+    layer.style.zIndex = "-1";
+    layer.style.overflow = "hidden";
+    layer.style.pointerEvents = "none";
+    layer.style.borderRadius = mode === "home" ? "inherit" : "0";
+    layer.setAttribute("data-ds-video-mount", mode);
+  };
+  const setVideoReadyAttribute = (ready) => {
+    const root = document.documentElement;
+    if (!root) return;
+    if (ready) root.setAttribute("data-dream-video", "ready");
+    else root.removeAttribute("data-dream-video");
+  };
+  const startVideo = () => {
+    if (!videoState?.ready || !videoState.element?.play) return;
+    let promise;
+    try {
+      promise = videoState.element.play();
+    } catch {
+      setVideoReadyAttribute(false);
+      return;
+    }
+    if (promise && typeof promise.catch === "function") {
+      promise.catch(() => setVideoReadyAttribute(false));
+    }
+  };
+  const pauseVideo = () => {
+    try {
+      videoState?.element?.pause?.();
+    } catch {}
+  };
+  const syncVideoPlayback = () => {
+    if (!videoState?.layer) return;
+    const hidden = document.visibilityState === "hidden" && !document.hasFocus();
+    const motion = reducedMotion();
+    const preference = videoPreferenceEnabled();
+    const allowed = !hidden && !motion && preference && (videoOnHome() || !videoTaskOff());
+    if (!allowed) {
+      pauseVideo();
+      if (!hidden) {
+        videoState.layer.style.display = "none";
+        setVideoReadyAttribute(false);
+      }
+      return;
+    }
+    videoState.layer.style.display = "";
+    if (videoState.ready) {
+      // Keep the poster until the media element is actually playing. Some
+      // Chromium builds resolve play() while the window is occluded and never
+      // leave the paused state; the `playing` event below is the real signal.
+      if (!videoState.element.paused) setVideoReadyAttribute(true);
+      startVideo();
+    }
+  };
+  const syncVideoMount = () => {
+    if (!videoState?.layer) return;
+    const mount = videoMountTarget();
+    if (!mount) {
+      setVideoReadyAttribute(false);
+      return;
+    }
+    if (videoState.layer.parentNode !== mount.target || videoState.mount !== mount.mode) {
+      styleVideoLayer(videoState.layer, mount.mode);
+      mount.target.insertBefore(videoState.layer, mount.target.firstChild || null);
+      videoState.mount = mount.mode;
+    }
+    syncVideoPlayback();
+  };
+  const disposeVideo = () => {
+    if (!videoState) return;
+    const { layer, element, url } = videoState;
+    pauseVideo();
+    try {
+      element?.removeAttribute?.("src");
+      element?.load?.();
+    } catch {}
+    layer?.remove?.();
+    if (url) URL.revokeObjectURL(url);
+    videoState = null;
+    if (window.__dreamSkinVideoKey) delete window.__dreamSkinVideoKey;
+    setVideoReadyAttribute(false);
+  };
+  const cleanupVideo = () => {
+    disposeVideo();
+    if (videoVisibilityHandler && typeof document.removeEventListener === "function") {
+      document.removeEventListener("visibilitychange", videoVisibilityHandler);
+    }
+    videoVisibilityHandler = null;
+    if (videoMotionHandler && videoMotionQuery) {
+      if (typeof videoMotionQuery.removeEventListener === "function") {
+        videoMotionQuery.removeEventListener("change", videoMotionHandler);
+      } else if (typeof videoMotionQuery.removeListener === "function") {
+        videoMotionQuery.removeListener(videoMotionHandler);
+      }
+    }
+    videoMotionHandler = null;
+    videoMotionQuery = null;
+    if (videoFocusHandler && typeof window.removeEventListener === "function") {
+      window.removeEventListener("focus", videoFocusHandler);
+      window.removeEventListener("blur", videoFocusHandler);
+    }
+    videoFocusHandler = null;
+    if (window.__dreamSkinAttachVideo === attachVideoEntry) {
+      delete window.__dreamSkinAttachVideo;
+    }
+  };
+  const setupVideoListeners = () => {
+    if (!videoVisibilityHandler && typeof document.addEventListener === "function") {
+      videoVisibilityHandler = () => syncVideoPlayback();
+      document.addEventListener("visibilitychange", videoVisibilityHandler);
+    }
+    if (!videoMotionHandler) {
+      videoMotionQuery = reducedMotionQuery();
+      videoMotionHandler = () => syncVideoMount();
+      if (typeof videoMotionQuery?.addEventListener === "function") {
+        videoMotionQuery.addEventListener("change", videoMotionHandler);
+      } else if (typeof videoMotionQuery?.addListener === "function") {
+        videoMotionQuery.addListener(videoMotionHandler);
+      }
+    }
+    if (!videoFocusHandler && typeof window.addEventListener === "function") {
+      videoFocusHandler = () => syncVideoPlayback();
+      window.addEventListener("focus", videoFocusHandler);
+      window.addEventListener("blur", videoFocusHandler);
+    }
+  };
+  const attachVideo = async (base64, meta) => {
+    if (!VIDEO || !videoPreferenceEnabled()) return { skipped: "preference" };
+    if (!meta || meta.key !== VIDEO.key) return { rejected: "video.key" };
+    if (videoState?.key === meta.key && videoState.element) {
+      syncVideoMount();
+      return { reused: true, key: meta.key };
+    }
+    disposeVideo();
+    if (reducedMotion()) return { skipped: "reduced-motion" };
+    if (typeof base64 !== "string" || !base64) return { rejected: "video.payload" };
+
+    let blob;
+    try {
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+      }
+      blob = new Blob([bytes], { type: VIDEO.mime });
+    } catch {
+      return { fallback: true, code: "video.decode" };
+    }
+    if (!blob || !(blob.size > 0)) return { fallback: true, code: "video.decode" };
+
+    let url;
+    let element;
+    let layer;
+    try {
+      url = URL.createObjectURL(blob);
+      element = document.createElement("video");
+      element.muted = true;
+      element.defaultMuted = true;
+      element.loop = true;
+      element.autoplay = true;
+      element.playsInline = true;
+      element.setAttribute("muted", "");
+      element.setAttribute("playsinline", "");
+      element.setAttribute("loop", "");
+      element.setAttribute("autoplay", "");
+      element.setAttribute("disablepictureinpicture", "");
+      element.setAttribute("disableremoteplayback", "");
+      element.setAttribute("aria-hidden", "true");
+      element.tabIndex = -1;
+      element.style.width = "100%";
+      element.style.height = "100%";
+      element.style.objectFit = "cover";
+      element.style.objectPosition = "var(--ds-art-position)";
+      element.style.opacity = "var(--ds-art-layer-opacity, .78)";
+      element.addEventListener("playing", () => {
+        if (videoState?.element === element) setVideoReadyAttribute(true);
+      });
+      element.addEventListener("pause", () => {
+        if (videoState?.element === element) setVideoReadyAttribute(false);
+      });
+      element.src = url;
+      layer = document.createElement("div");
+      layer.setAttribute("data-ds-video-layer", "");
+      layer.setAttribute("aria-hidden", "true");
+      layer.appendChild(element);
+    } catch {
+      if (url) URL.revokeObjectURL(url);
+      return { fallback: true, code: "video.decode" };
+    }
+
+    videoState = { key: meta.key, layer, element, url, ready: false, mount: null };
+    setupVideoListeners();
+    // Attach before waiting for the first frame: some Chromium builds defer
+    // media loading for a detached <video>, which would otherwise time out.
+    syncVideoMount();
+    const loaded = await new Promise((resolve) => {
+      let settled = false;
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        resolve(value);
+      };
+      const timer = setTimeout(() => finish(false), 15000);
+      element.addEventListener("loadeddata", () => {
+        clearTimeout(timer);
+        finish(true);
+      }, { once: true });
+      element.addEventListener("error", () => {
+        clearTimeout(timer);
+        finish(false);
+      }, { once: true });
+    });
+    if (!videoState || videoState.element !== element) {
+      disposeVideo();
+      return { fallback: true, code: "video.stale" };
+    }
+    if (!loaded) {
+      disposeVideo();
+      return { fallback: true, code: "video.decode" };
+    }
+    videoState.ready = true;
+    window.__dreamSkinVideoKey = meta.key;
+    syncVideoMount();
+    return { ready: true, key: meta.key };
+  };
+  const attachVideoEntry = (base64, meta) => {
+    const current = window[STATE_KEY];
+    if (current?.installToken !== installToken) return Promise.resolve({ stale: true });
+    return attachVideo(base64, meta);
+  };
+  window.__dreamSkinAttachVideo = attachVideoEntry;
   const ensure = ({ root: rootPass = true, scope: scopePass = false, parts: partPass = false } = {}) => {
     if (window[DISABLED_KEY]) return;
     const root = document.documentElement;
@@ -976,6 +1252,7 @@
       refreshPredicates();
     }
     if (scopePass) refreshScope();
+    if (videoState) syncVideoMount();
   };
 
   const cleanup = () => {
@@ -993,6 +1270,7 @@
         root.style.removeProperty(property);
       }
     }
+    cleanupVideo();
     removeParts();
     removePredicates();
     state?.rootObserver?.disconnect();
@@ -1175,4 +1453,7 @@
     styleMode,
     analysis: artAnalysis,
   };
-})(__DREAM_SKIN_CSS_JSON__, __DREAM_SKIN_ART_JSON__, __DREAM_SKIN_THEME_JSON__)
+})(__DREAM_SKIN_CSS_JSON__, __DREAM_SKIN_ART_JSON__, __DREAM_SKIN_THEME_JSON__, __DREAM_SKIN_VIDEO_META_JSON__)
+
+
+

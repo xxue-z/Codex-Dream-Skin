@@ -39,7 +39,8 @@
 
 - 客户端只导入普通 `.zip`，不支持 `.dreamskin`，也不接受仅修改扩展名的伪装文件。
 - 新主题必须同时包含非空 `theme.json`、非空 `theme.css` 和 `theme.json` 引用的唯一背景图；三者缺一不可。
-- 背景图最大 10 MiB，并继续执行像素、尺寸、媒体魔数和解码校验。前端、Studio、服务端和双端客户端的限制必须一致。
+- 可选动态背景只允许一个 `background.mp4`：H.264 8-bit、无音轨、非分片；`moov` 可位于文件任意位置但自身不超过 2 MiB，最大 16 MiB、2-20 秒、不超过 1920x1080；`theme.json` 必须使用 `schemaVersion: 2`，`manifest.json` 必须使用 `skinApiVersion: 2` 且声明 `video` 能力。
+- 背景图最大 10 MiB，并继续执行像素、尺寸、媒体魔数和解码校验。视频还必须通过有界 MP4 结构校验；前端、Studio、服务端和双端客户端的限制必须一致。
 - 正式 Studio 包还必须校验 `manifest.json` 的平台、最低客户端版本、注册文件集合、字节数和 SHA-256。未知文件、重复路径、路径穿越、链接、reparse、嵌套归档、压缩炸弹和歧义根目录必须 fail closed。
 - `theme.css` 在导入时和每次应用时都必须通过共享 Safe CSS 策略，只允许作用于登记的公开主题部件。不得为新导入包增加旧主题兼容旁路。
 - 导入成功只写入“已保存主题”库，不自动切换活动主题，也不覆盖 last-known-good。用户必须在菜单中明确选择后才应用。
@@ -75,3 +76,4 @@
 - 不修改官方 Codex/ChatGPT 的 `app.asar`、签名、系统 ACL 或受保护安装目录；不要求关闭 Gatekeeper、Defender、SmartScreen 或执行 `ExecutionPolicy Bypass`。
 - 安装、升级和卸载必须保留原子 staging、备份与回滚，验证目标身份后才操作进程或路径。拒绝不可信符号链接和路径重定向。
 - 对外部包、网络响应和状态文件使用有界读取、严格 schema、内容校验和 fail-closed 行为；日志和错误信息不得泄露凭据或私人路径内容。
+
