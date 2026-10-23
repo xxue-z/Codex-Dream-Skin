@@ -185,6 +185,7 @@ source_file_count="$(/usr/bin/find "$SOURCE_ROOT" -xdev -mindepth 1 -maxdepth 1 
 
 if [ -f "$SOURCE_ROOT/manifest.json" ]; then
   official_backgrounds=0
+  official_videos=0
   while IFS= read -r -d '' source_file; do
     source_name="$(/usr/bin/basename "$source_file")"
     case "$source_name" in
@@ -192,11 +193,16 @@ if [ -f "$SOURCE_ROOT/manifest.json" ]; then
       background.webp|background.jpg|background.png)
         official_backgrounds=$((official_backgrounds + 1))
         ;;
+      background.mp4)
+        official_videos=$((official_videos + 1))
+        ;;
       *) fail_extract "Official theme ZIP contains an unregistered file: $source_name" ;;
     esac
   done < <(/usr/bin/find "$SOURCE_ROOT" -xdev -mindepth 1 -maxdepth 1 -type f -print0)
   [ "$official_backgrounds" -eq 1 ] \
     || fail_extract "Official theme ZIP must contain exactly one background.webp, background.jpg, or background.png."
+  [ "$official_videos" -le 1 ] \
+    || fail_extract "Official theme ZIP may contain at most one background.mp4."
   [ -f "$SOURCE_ROOT/theme.css" ] \
     || fail_extract "New official theme ZIP imports require theme.css and the safe-css capability."
 else

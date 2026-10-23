@@ -3,6 +3,7 @@ import { constants as fsConstants } from "node:fs";
 import path from "node:path";
 import { decodeAndValidateSafeCss } from "../assets/safe-css-validator.mjs";
 import { runtimeThemeContentFingerprint } from "./theme-content-fingerprint.mjs";
+import { MAX_VIDEO_BYTES, Mp4ValidationError, readMp4Metadata } from "../assets/mp4-metadata.mjs";
 
 const [sourceDirArg, stageDirArg] = process.argv.slice(2);
 if (!sourceDirArg || !stageDirArg) {
@@ -93,8 +94,29 @@ async function main() {
   const configPath = path.join(sourceRoot, "theme.json");
   const config = await readStableFile(configPath, "Theme config", MAX_CONFIG_BYTES);
   const theme = decodeJson(config.bytes, "Theme config");
-  if (theme?.schemaVersion !== 1 || typeof theme.image !== "string" || !theme.image) {
+  if ((theme?.schemaVersion !== 1 && theme?.schemaVersion !== 2) ||
+      typeof theme.image !== "string" || !theme.image) {
     throw new Error("Theme config has an unsupported schema or image field");
+  }
+  if (theme.schemaVersion === 1 && theme.video !== undefined) {
+    throw new Error("Theme config must not declare video with schemaVersion 1");
+  }
+  let video = null;
+  if (theme.schemaVersion === 2 && theme.video !== undefined) {
+    if (!theme.video || typeof theme.video !== "object" || Array.isArray(theme.video) ||
+        theme.video.file !== "background.mp4") {
+      throw new Error("Theme config has an unsupported video field");
+    }
+    video = await readStableFile(path.join(sourceRoot, "background.mp4"), "Theme video", MAX_VIDEO_BYTES);
+    if (video.bytes.length < 1) throw new Error("Theme video is empty");
+    try {
+      readMp4Metadata(video.bytes);
+    } catch (error) {
+      if (error instanceof Mp4ValidationError) {
+        throw new Error(`Theme video rejected (${error.code}): ${error.message}`);
+      }
+      throw error;
+    }
   }
   if (path.basename(theme.image) !== theme.image) {
     throw new Error("Theme image must stay inside its theme directory");
@@ -126,10 +148,12 @@ async function main() {
   // observes a complete pair; subsequent source edits cannot race the copy.
   await writeExclusive(path.join(stageRoot, theme.image), image.bytes);
   if (safeCss) await writeExclusive(path.join(stageRoot, "theme.css"), safeCss.bytes);
+  if (video) await writeExclusive(path.join(stageRoot, "background.mp4"), video.bytes);
   await writeExclusive(path.join(stageRoot, "theme.json"), config.bytes);
   process.stdout.write(JSON.stringify({
     image: theme.image,
-    contentFingerprint: runtimeThemeContentFingerprint(theme, image.bytes, safeCss?.bytes ?? null),
+    video: video ? "background.mp4" : null,
+    contentFingerprint: runtimeThemeContentFingerprint(theme, image.bytes, safeCss?.bytes ?? null, video?.bytes ?? null),
   }));
 }
 

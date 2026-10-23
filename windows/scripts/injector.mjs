@@ -1,10 +1,11 @@
 import fs from "node:fs/promises";
-import { readThemeTransparency, themePreferencesPath } from "../assets/theme-preferences.mjs";
+import { readThemeTransparency, readThemeVideoPreference, themePreferencesPath } from "../assets/theme-preferences.mjs";
 import { constants as fsConstants } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readImageMetadata } from "./image-metadata.mjs";
+import { MAX_VIDEO_BYTES, Mp4ValidationError, readMp4Metadata } from "../assets/mp4-metadata.mjs";
 import {
   normalizeThemeColor,
   normalizeThemeText,
@@ -40,7 +41,7 @@ const stableTestidLiteral = (testid) => {
   }
   return JSON.stringify(`[data-testid="${testid}"]`);
 };
-const SKIN_VERSION = "1.5.21";
+const SKIN_VERSION = "1.6.0";
 // .github/workflows/ci.yml's version-consistency check greps this file for a
 // literal `const SKIN_VERSION = "...";` line, so the export stays a separate
 // statement rather than an inline `export const`.
@@ -324,14 +325,14 @@ class CdpSession {
     this.listeners.set(method, listeners);
   }
 
-  send(method, params = {}) {
+  send(method, params = {}, timeoutMs = 10000) {
     if (this.closed) return Promise.reject(new Error("CDP session is closed"));
     return new Promise((resolve, reject) => {
       const id = this.nextId++;
       const timeout = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`CDP command timed out: ${method}`));
-      }, 10000);
+      }, timeoutMs);
       this.pending.set(id, { resolve, reject, timeout });
       try {
         this.ws.send(JSON.stringify({ id, method, params }));
@@ -355,6 +356,34 @@ class CdpSession {
       throw new Error(`Renderer evaluation failed: ${detail}`);
     }
     return result.result?.value;
+  }
+  async callFunctionOn(functionDeclaration, args = []) {
+    const target = await this.send("Runtime.evaluate", {
+      expression: "window",
+      returnByValue: false,
+      userGesture: false,
+    });
+    if (target.exceptionDetails || !target.result?.objectId) {
+      throw new Error("Renderer window object is unavailable");
+    }
+    const objectId = target.result.objectId;
+    try {
+      const result = await this.send("Runtime.callFunctionOn", {
+        objectId,
+        functionDeclaration,
+        arguments: args.map((value) => ({ value })),
+        awaitPromise: true,
+        returnByValue: true,
+        userGesture: false,
+      }, 60000);
+      if (result.exceptionDetails) {
+        const detail = result.exceptionDetails.exception?.description ?? result.exceptionDetails.text;
+        throw new Error(`Renderer function failed: ${detail}`);
+      }
+      return result.result?.value;
+    } finally {
+      this.send("Runtime.releaseObject", { objectId }).catch(() => {});
+    }
   }
 
   close() {
@@ -530,8 +559,21 @@ export async function loadTheme(themeDir, preferenceOptions = {}) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     throw new Error("Theme root must be an object");
   }
-  if (raw.schemaVersion !== 1) {
-    throw new Error("Theme must use schemaVersion 1");
+  if (raw.schemaVersion !== 1 && raw.schemaVersion !== 2) {
+    throw new Error("Theme must use schemaVersion 2 (legacy schemaVersion 1 remains supported)");
+  }
+  if (raw.schemaVersion === 1 && raw.video !== undefined) {
+    throw new Error("Theme schemaVersion 1 must not declare video");
+  }
+  let videoFile = null;
+  if (raw.schemaVersion === 2 && raw.video !== undefined) {
+    if (!raw.video || typeof raw.video !== "object" || Array.isArray(raw.video)) {
+      throw new Error("Theme video must be an object");
+    }
+    if (raw.video.file !== "background.mp4") {
+      throw new Error("Theme video file must be background.mp4");
+    }
+    videoFile = raw.video.file;
   }
   const image = normalizedText(raw.image, "image", null, 240);
   if (!image || path.isAbsolute(image)) throw new Error("Theme image must be a relative path");
@@ -569,7 +611,7 @@ export async function loadTheme(themeDir, preferenceOptions = {}) {
     line: normalizeThemeColor(rawColors?.line, "rgba(124, 255, 70, .28)"),
   };
   const theme = {
-    schemaVersion: 1,
+    schemaVersion: raw.schemaVersion,
     id: normalizeThemeText(raw.id, "custom", 80, "id", themePath),
     name: normalizeThemeText(raw.name, "Codex Dream Skin", 80, "name", themePath),
     brandSubtitle: normalizeThemeText(raw.brandSubtitle, "CODEX DREAM SKIN", 120, "brandSubtitle", themePath),
@@ -592,6 +634,9 @@ export async function loadTheme(themeDir, preferenceOptions = {}) {
   };
   const userTransparency = await readThemeTransparency(theme.id, { preferencesPath: themePreferencesPath("win32"), ...preferenceOptions });
   if (userTransparency !== undefined) theme.userTransparency = userTransparency;
+  const videoPreference = await readThemeVideoPreference(theme.id, { preferencesPath: themePreferencesPath("win32"), ...preferenceOptions });
+  if (!videoPreference.enabled) theme.videoEnabled = false;
+  if (videoPreference.paused) theme.videoPaused = true;
   const [themeStat, imageStat, safeCss] = await Promise.all([
     fs.stat(themePath),
     fs.stat(realImagePath),
@@ -611,11 +656,50 @@ export async function loadTheme(themeDir, preferenceOptions = {}) {
     throw new Error("Theme image metadata is invalid or exceeds the 16384px / 50MP safety limit");
   }
   theme.artMetadata = artMetadata;
+  let videoPath = undefined;
+  let videoBytes = undefined;
+  let videoMetadata = undefined;
+  let videoStat = undefined;
+  if (videoFile) {
+    const requestedVideoPath = path.resolve(realThemeDir, videoFile);
+    const relativeVideo = path.relative(realThemeDir, requestedVideoPath);
+    if (!isContainedRelativePath(relativeVideo)) {
+      throw new Error("Theme video must remain inside the selected theme directory");
+    }
+    if (path.extname(requestedVideoPath).toLowerCase() !== ".mp4") {
+      throw new Error("Theme video must use the .mp4 extension");
+    }
+    videoPath = await fs.realpath(requestedVideoPath);
+    const realRelativeVideo = path.relative(realThemeDir, videoPath);
+    if (!isContainedRelativePath(realRelativeVideo)) {
+      throw new Error("Theme video cannot escape through a link or junction");
+    }
+    videoStat = await fs.stat(videoPath);
+    if (!videoStat.isFile() || videoStat.size < 1 || videoStat.size > MAX_VIDEO_BYTES) {
+      throw new Error(`Theme video must be between 1 byte and ${MAX_VIDEO_BYTES / 1024 / 1024} MB`);
+    }
+    videoBytes = await fs.readFile(videoPath);
+    if (videoBytes.length < 1 || videoBytes.length > MAX_VIDEO_BYTES) {
+      throw new Error(`Theme video must be between 1 byte and ${MAX_VIDEO_BYTES / 1024 / 1024} MB`);
+    }
+    try {
+      videoMetadata = readMp4Metadata(videoBytes);
+    } catch (error) {
+      if (error instanceof Mp4ValidationError) {
+        throw new Error(`Theme video rejected (${error.code}): ${error.message}`);
+      }
+      throw error;
+    }
+    theme.video = { file: videoFile };
+  }
+
   const fingerprint = createHash("sha256")
     .update(themeText, "utf8")
-    .update(JSON.stringify({ userTransparency: theme.userTransparency }))
+    .update(JSON.stringify({ userTransparency: theme.userTransparency, videoEnabled: theme.videoEnabled, videoPaused: theme.videoPaused }))
     .update("\0")
     .update(imageBytes)
+    .update("\0")
+    .update(videoBytes ?? Buffer.alloc(0))
     .update("\0")
     .update(safeCss?.source ?? "")
     .digest("hex");
@@ -624,12 +708,16 @@ export async function loadTheme(themeDir, preferenceOptions = {}) {
     themePath,
     imagePath: realImagePath,
     imageBytes,
+    videoPath,
+    videoBytes,
+    videoMetadata,
     safeCss: safeCss?.source ?? "",
     safeCssRuntime: safeCss?.runtimeSource ?? "",
     safeCssPath: safeCss?.path ?? null,
     safeCssStatus: safeCss ? "validated" : "none",
     fingerprint,
     sourceStamp: `${themeStat.size}:${themeStat.mtimeMs}:${imageStat.size}:${imageStat.mtimeMs}:` +
+      (videoStat ? `${videoStat.size}:${videoStat.mtimeMs}` : "none") + ":" +
       (safeCss ? `${safeCss.stat.size}:${safeCss.stat.mtimeMs}` : "none"),
   };
 }
@@ -649,6 +737,13 @@ export async function loadPayload(themeDir = path.join(root, "assets"), candidat
   const styleRevision = createHash("sha256").update(combinedCss).digest("hex").slice(0, 20);
   loadedTheme.theme.artKey = createHash("sha256")
     .update(loadedTheme.imageBytes).digest("hex").slice(0, 20);
+  const videoKey = loadedTheme.videoBytes
+    ? createHash("sha256").update(loadedTheme.videoBytes).digest("hex").slice(0, 20)
+    : null;
+  const videoMeta = loadedTheme.videoBytes
+    ? { key: videoKey, mime: "video/mp4", bytes: loadedTheme.videoBytes.length }
+    : null;
+  loadedTheme.theme.videoKey = videoKey;
   const revision = createHash("sha256")
     .update(SKIN_VERSION)
     .update(combinedCss)
@@ -666,6 +761,7 @@ export async function loadPayload(themeDir = path.join(root, "assets"), candidat
     .replace("__DREAM_SKIN_CSS_JSON__", () => JSON.stringify(combinedCss))
     .replace("__DREAM_SKIN_ART_JSON__", () => JSON.stringify(artDataUrl))
     .replace("__DREAM_SKIN_THEME_JSON__", () => JSON.stringify(loadedTheme.theme))
+    .replace("__DREAM_SKIN_VIDEO_META_JSON__", () => JSON.stringify(videoMeta))
     .replace("__DREAM_SKIN_VERSION_JSON__", () => JSON.stringify(SKIN_VERSION))
     .replace("__DREAM_SKIN_STYLE_REVISION_JSON__", () => JSON.stringify(styleRevision))
     .replace("__DREAM_SKIN_PAYLOAD_REVISION_JSON__", () => JSON.stringify(revision));
@@ -683,7 +779,7 @@ export async function loadPayload(themeDir = path.join(root, "assets"), candidat
     throw new Error(`Payload failed to parse as JavaScript: ${error.message}`);
   }
   const { imageBytes: _imageBytes, ...themeState } = loadedTheme;
-  return { ...themeState, payload, revision };
+  return { ...themeState, videoMeta, payload, revision };
 }
 
 async function fileExists(filePath) {
@@ -697,15 +793,17 @@ async function fileExists(filePath) {
 }
 
 async function readThemeSourceStamp(loadedTheme) {
-  const [themeStat, imageStat, cssStat] = await Promise.all([
+  const [themeStat, imageStat, videoStat, cssStat] = await Promise.all([
     fs.stat(loadedTheme.themePath),
     fs.stat(loadedTheme.imagePath),
+    loadedTheme.videoPath ? fs.stat(loadedTheme.videoPath) : Promise.resolve(null),
     fs.stat(path.join(path.dirname(loadedTheme.themePath), "theme.css")).catch((error) => {
       if (error.code === "ENOENT") return null;
       throw error;
     }),
   ]);
   return `${themeStat.size}:${themeStat.mtimeMs}:${imageStat.size}:${imageStat.mtimeMs}:` +
+    (videoStat ? `${videoStat.size}:${videoStat.mtimeMs}` : "none") + ":" +
     (cssStat ? `${cssStat.size}:${cssStat.mtimeMs}` : "none");
 }
 
@@ -871,6 +969,31 @@ async function connectCodexTargets(port, timeoutMs, expectedBrowserId) {
 
 async function applyToSession(session, payload) {
   return session.evaluate(payload);
+}
+
+let lastVideoAttachErrorLogAt = 0;
+
+async function applyVideoToSession(session, loaded) {
+  if (!loaded?.videoMeta || !loaded.videoBytes?.length) return;
+  try {
+    const current = await session.evaluate("window.__dreamSkinVideoKey || null");
+    if (current === loaded.videoMeta.key) return;
+    await session.callFunctionOn(
+      "function (base64, meta) { return window.__dreamSkinAttachVideo(base64, meta); }",
+      [loaded.videoBytes.toString("base64"), loaded.videoMeta],
+    );
+  } catch (error) {
+    if (Date.now() - lastVideoAttachErrorLogAt >= 30000) {
+      console.error(`[dream-skin] video attach failed: ${error.message}`);
+      lastVideoAttachErrorLogAt = Date.now();
+    }
+  }
+}
+
+async function applyThemeToSession(session, loaded) {
+  const result = await session.evaluate(loaded.payload);
+  await applyVideoToSession(session, loaded);
+  return result;
 }
 
 export function earlyPayloadFor(payload, revision) {
@@ -1460,7 +1583,7 @@ async function runOneShot(options) {
               `正在应用「${loadedPayload.theme.name}」…`,
             );
           }
-          await applyToSession(session, payload);
+          await applyThemeToSession(session, loadedPayload);
           await new Promise((resolve) => setTimeout(resolve, 850));
         }
         if (options.reload) {
@@ -1473,7 +1596,7 @@ async function runOneShot(options) {
                 `正在应用「${loadedPayload.theme.name}」…`,
               );
             }
-            await applyToSession(session, payload);
+            await applyThemeToSession(session, loadedPayload);
           }
         }
         if (operationToken) {
@@ -1570,7 +1693,7 @@ async function runWatch(options) {
     session.on("Page.loadEventFired", () => {
       if (!fallbackTargets.get(id)) return;
       setTimeout(() => {
-        const operation = paused ? removeFromSession(session) : applyToSession(session, loadedPayload.payload);
+        const operation = paused ? removeFromSession(session) : applyThemeToSession(session, loadedPayload);
         operation.catch((error) => {
           if (Date.now() - lastReinjectErrorLogAt >= 30000) {
             console.error(`[dream-skin] reinject failed for ${target.id}: ${error.message}`);
@@ -1676,7 +1799,7 @@ async function runWatch(options) {
               if (nextEarlyScript) earlyScripts.set(id, nextEarlyScript);
               else earlyScripts.delete(id);
               await removeEarlyPayload(session, previousEarlyScript);
-              await applyToSession(session, loadedPayload.payload);
+              await applyThemeToSession(session, loadedPayload);
             }
           } catch (error) {
             console.error(`[dream-skin] live theme update failed for ${id}: ${error.message}`);
@@ -1745,6 +1868,12 @@ async function runWatch(options) {
           }
           fallbackTargets.set(target.id, earlyInjectionFallback);
           if (earlyInjectionFallback) attachLoadFallback(target.id, target, session);
+          session.on("Page.loadEventFired", () => {
+            if (paused || !loadedPayload?.videoMeta) return;
+            setTimeout(() => {
+              applyVideoToSession(session, loadedPayload).catch(() => {});
+            }, 300);
+          });
           if (identityAnchor.closed) throw new CdpIdentityMismatchError("Original CDP browser identity closed");
           let earlyApplied = false;
           if (!paused && !earlyInjectionFallback) {
@@ -1753,7 +1882,8 @@ async function runWatch(options) {
             ).catch(() => false);
           }
           if (paused) await removeFromSession(session);
-          else if (!earlyApplied) await applyToSession(session, loadedPayload.payload);
+          else if (!earlyApplied) await applyThemeToSession(session, loadedPayload);
+          else await applyVideoToSession(session, loadedPayload);
           sessions.set(target.id, session);
           if (earlyScriptId) earlyScripts.set(target.id, earlyScriptId);
           targetFailures.delete(target.id);
@@ -1855,6 +1985,8 @@ if (path.resolve(process.argv[1] || "") === path.resolve(scriptPath)) {
       hasPalette: Object.hasOwn(loaded.theme, "palette"),
       art: loaded.theme.art,
       artMetadata: loaded.theme.artMetadata ?? null,
+      videoBytes: loaded.videoMeta?.bytes ?? 0,
+      videoKey: loaded.videoMeta?.key ?? null,
       safeCssStatus: loaded.safeCssStatus,
     }));
   } else if (options.mode === "begin-operation") await runBeginOperation(options);

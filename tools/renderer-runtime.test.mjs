@@ -38,6 +38,7 @@ function makeFixture({
   generic = false, genericComposer = true, genericHome = false, genericSearch = false,
   modernMessages = false, modernComposerLayout = false, cachedPages = false,
   pathname = "/index.html", initialRoute = "",
+  reducedMotion = false, visibility = "visible",
 } = {}) {
   const attrs = new Map();
   const rootStyle = styleDeclaration();
@@ -52,6 +53,11 @@ function makeFixture({
   const revoked = [];
   let nextId = 0;
   let nextBlob = 0;
+  let nextCreated = 0;
+  let reducedMotionValue = reducedMotion;
+  let visibilityValue = visibility;
+  let focusValue = true;
+  const createdVideos = [];
   const attributesFor = (values) => [...values].map(([name, value]) => ({ name, value }));
   const makeDomNode = (name, parentElement = null, values = new Map(), matchedSelectors = []) => {
     const selectorMatches = new Set(matchedSelectors);
@@ -64,7 +70,26 @@ function makeFixture({
       hasAttribute(attribute) { return values.has(attribute); },
       setAttribute(attribute, value) { values.set(attribute, String(value)); },
       removeAttribute(attribute) { values.delete(attribute); },
-      appendChild(child) { child.parentElement = node; return child; },
+      children: [],
+      get firstChild() { return node.children[0] ?? null; },
+      appendChild(child) { child.parentElement = node; node.children.push(child); return child; },
+      insertBefore(child, reference) {
+        child.parentElement = node;
+        const index = reference ? node.children.indexOf(reference) : -1;
+        if (index >= 0) node.children.splice(index, 0, child);
+        else node.children.push(child);
+        return child;
+      },
+      removeChild(child) {
+        const index = node.children.indexOf(child);
+        if (index >= 0) node.children.splice(index, 1);
+        child.parentElement = null;
+        return child;
+      },
+      remove() {
+        if (node.parentElement?.removeChild) node.parentElement.removeChild(node);
+        else node.parentElement = null;
+      },
       matches(selector) {
         if (selector === '[data-app-shell-active-page="false"]') {
           return values.get("data-app-shell-active-page") === "false";
@@ -101,12 +126,14 @@ function makeFixture({
   root.style = rootStyle;
   root.appendChild = (node) => {
     node.parentElement = root;
+    root.children.push(node);
     if (node.id) nodes.set(node.id, node);
     return node;
   };
   const body = makeDomNode("body", root);
   body.appendChild = (node) => {
     node.parentElement = body;
+    body.children.push(node);
     if (node.id) nodes.set(node.id, node);
     return node;
   };
@@ -251,14 +278,66 @@ function makeFixture({
     };
     return node;
   };
+  const videoListeners = new Map();
   const document = {
     documentElement: root,
     head: root,
     body,
     adoptedStyleSheets: adopted ? [] : undefined,
-    createElement(tag) { return tag === "style" ? makeStyleNode() : { tagName: tag }; },
+    get visibilityState() { return visibilityValue; },
+    hasFocus() { return focusValue; },
+    addEventListener(type, callback) { videoListeners.set(type, callback); },
+    removeEventListener(type) { videoListeners.delete(type); },
+    createElement(tag) {
+      if (tag === "style") return makeStyleNode();
+      const node = makeDomNode(`created-${tag}-${++nextCreated}`, null);
+      if (tag === "video") {
+        node.listeners = new Map();
+        node.src = "";
+        node.muted = false;
+        node.defaultMuted = false;
+        node.loop = false;
+        node.autoplay = false;
+        node.playsInline = false;
+        node.playCalls = 0;
+        node.pauseCalls = 0;
+        node.paused = true;
+        node.play = () => {
+          node.playCalls += 1;
+          node.playing = true;
+          node.paused = false;
+          for (const callback of node.listeners.get("playing") || []) callback({ type: "playing" });
+          return Promise.resolve();
+        };
+        node.pause = () => {
+          node.pauseCalls += 1;
+          node.playing = false;
+          node.paused = true;
+          for (const callback of node.listeners.get("pause") || []) callback({ type: "pause" });
+        };
+        node.load = () => { node.loadCalls = (node.loadCalls || 0) + 1; };
+        node.addEventListener = (type, callback) => {
+          const list = node.listeners.get(type) || [];
+          list.push(callback);
+          node.listeners.set(type, list);
+        };
+        node.removeEventListener = (type, callback) => {
+          const list = node.listeners.get(type) || [];
+          node.listeners.set(type, list.filter((entry) => entry !== callback));
+        };
+        node.emit = (type) => {
+          for (const callback of node.listeners.get(type) || []) callback({ type });
+        };
+        createdVideos.push(node);
+      }
+      return node;
+    },
     getElementById(id) { return nodes.get(id) || null; },
     querySelector(selector) {
+      const part = /^\[data-ds-part="([^"]+)"\]$/.exec(selector);
+      if (part) {
+        return [...domNodes].find((node) => node.getAttribute?.("data-ds-part") === part[1]) || null;
+      }
       return (selectorNodes.get(selector) || [])[0] || null;
     },
     querySelectorAll(selector) {
@@ -282,11 +361,12 @@ function makeFixture({
   }
   const window = {
     navigation,
-    matchMedia() {
+    matchMedia(query = "") {
+      const motion = String(query).includes("prefers-reduced-motion");
       return {
-        matches: nativeAppearance === "dark",
-        addEventListener(type, callback) { listeners.set(`media:${type}`, callback); },
-        removeEventListener(type) { listeners.delete(`media:${type}`); },
+        matches: motion ? reducedMotionValue : nativeAppearance === "dark",
+        addEventListener(type, callback) { listeners.set(motion ? `motion:${type}` : `media:${type}`, callback); },
+        removeEventListener(type) { listeners.delete(motion ? `motion:${type}` : `media:${type}`); },
       };
     },
     addEventListener() {},
@@ -295,6 +375,9 @@ function makeFixture({
   const context = {
     window,
     document,
+    fetch: async () => ({
+      blob: async () => new Blob([Uint8Array.of(1, 2, 3)], { type: "video/mp4" }),
+    }),
     location: {
       protocol: "app:",
       pathname,
@@ -317,7 +400,7 @@ function makeFixture({
     clearInterval(id) { intervals.delete(id); },
     console,
   };
-  const payloadFor = (theme = {}, cssText = ".fixture { color: red; }") => {
+  const payloadFor = (theme = {}, cssText = ".fixture { color: red; }", videoMeta = null) => {
     const template = fixture.template;
     return template
       .replace("__DREAM_SKIN_CSS_JSON__", JSON.stringify(cssText))
@@ -325,7 +408,8 @@ function makeFixture({
       .replace("__DREAM_SKIN_THEME_JSON__", JSON.stringify({ id: "fixture", appearance: "auto", ...theme }))
       .replace("__DREAM_SKIN_VERSION_JSON__", JSON.stringify("test"))
       .replace("__DREAM_SKIN_STYLE_REVISION_JSON__", JSON.stringify("css-rev"))
-      .replace("__DREAM_SKIN_PAYLOAD_REVISION_JSON__", JSON.stringify("payload-rev"));
+      .replace("__DREAM_SKIN_PAYLOAD_REVISION_JSON__", JSON.stringify("payload-rev"))
+      .replace("__DREAM_SKIN_VIDEO_META_JSON__", JSON.stringify(videoMeta));
   };
   const flushTimers = (maximumDelay = Infinity) => {
     for (const [id, timer] of [...timers]) {
@@ -341,8 +425,12 @@ function makeFixture({
     return node;
   };
   return {
-    addDynamicMessage, attrs, context, document, domNodes, flushTimers, intervals, listeners,
+    addDynamicMessage, attrs, context, createdVideos, document, domNodes, flushTimers, intervals, listeners,
     nodes, observers, partFixtures, payloadFor, revoked, root, rootClasses, rootStyle, timers, window,
+    setVisibility(value) { visibilityValue = value; },
+    setFocus(value) { focusValue = value; },
+    setReducedMotion(value) { reducedMotionValue = value; },
+    videoListeners,
   };
 }
 
@@ -591,6 +679,11 @@ export async function runRendererRuntimeTest(assetRoot) {
   assert.ok(popupText && popupText[1].includes('[role="menu"]') && popupText[1].includes('[data-ds-part="dialog"]'),
     "Uploaded-alpha attachment, menu and search descriptions must retain readable foreground tokens");
   assert.match(css, /--ds-task-full-veil/);
+  assert.match(
+    css,
+    /html\[data-dream-skin="active"\]\[data-dream-art-wide="true"\]\[data-dream-video="ready"\][\s\S]{0,160}background-color:\s*transparent\s*!important/,
+    "Wide video layers must clear the opaque html/body canvases so the fixed video is visible",
+  );
   assert.match(css, /data-dream-task-mode="full"/);
   assert.match(css, /background-image:\s*var\(--ds-task-full-veil\),\s*var\(--dream-skin-art\)/);
   assert.match(
@@ -1271,7 +1364,67 @@ export async function runRendererRuntimeTest(assetRoot) {
   assert.equal(fallbackState.cleanup(), true);
   assert.equal(fallback.nodes.has("codex-dream-skin-style"), false);
 
+  const videoTheme = { id: "fixture", appearance: "auto" };
+  const videoMeta = { key: "video-key", mime: "video/mp4", bytes: 3 };
+  const dynamic = makeFixture({ nativeAppearance: "dark" });
+  vm.runInNewContext(dynamic.payloadFor(videoTheme, undefined, videoMeta), dynamic.context);
+  assert.equal(typeof dynamic.window.__dreamSkinAttachVideo, "function");
+  const attachPromise = dynamic.window.__dreamSkinAttachVideo("AAAA", videoMeta);
+  for (let index = 0; index < 30 && !(dynamic.createdVideos[0]?.listeners.get("loadeddata")?.length); index += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const video = dynamic.createdVideos[0];
+  assert.ok(video, "dynamic background must create a video element");
+  video.emit("loadeddata");
+  const attachResult = await attachPromise;
+  assert.equal(attachResult.ready, true);
+  assert.equal(dynamic.root.getAttribute("data-dream-video"), "ready");
+  assert.equal(video.muted, true);
+  assert.equal(video.loop, true);
+  assert.equal(video.playsInline, true);
+  assert.equal(video.getAttribute("playsinline"), "");
+  assert.equal(video.getAttribute("disablepictureinpicture"), "");
+  assert.equal(video.playCalls > 0, true);
+  const videoLayer = video.parentElement;
+  assert.equal(videoLayer.getAttribute("data-ds-video-mount"), "home");
+  assert.equal(videoLayer.style.position, "absolute");
+  assert.equal(videoLayer.style.zIndex, "-1");
+  assert.equal(videoLayer.style.pointerEvents, "none");
+  assert.equal(videoLayer.parentElement, dynamic.partFixtures.homeHero);
+  assert.equal((await dynamic.window.__dreamSkinAttachVideo("AAAA", videoMeta)).reused, true);
+  dynamic.setVisibility("hidden");
+  dynamic.setFocus(false);
+  dynamic.videoListeners.get("visibilitychange")();
+  assert.equal(video.pauseCalls > 0, true);
+  assert.equal(dynamic.root.getAttribute("data-dream-video"), null);
+  dynamic.setVisibility("visible");
+  dynamic.setFocus(true);
+  dynamic.videoListeners.get("visibilitychange")();
+  assert.equal(video.playing, true);
+  assert.equal(dynamic.root.getAttribute("data-dream-video"), "ready");
+  const dynamicState = dynamic.window.__CODEX_DREAM_SKIN_STATE__;
+  assert.equal(dynamicState.cleanup(), true);
+  assert.equal(dynamic.root.getAttribute("data-dream-video"), null);
+  assert.ok(dynamic.revoked.includes(video.src));
+  assert.equal(dynamic.window.__dreamSkinAttachVideo, undefined);
+
+  const reduced = makeFixture({ nativeAppearance: "dark", reducedMotion: true });
+  vm.runInNewContext(reduced.payloadFor(videoTheme, undefined, videoMeta), reduced.context);
+  assert.equal((await reduced.window.__dreamSkinAttachVideo("AAAA", videoMeta)).skipped, "reduced-motion");
+  assert.equal(reduced.createdVideos.length, 0);
+
+  const preferenceOff = makeFixture({ nativeAppearance: "dark" });
+  vm.runInNewContext(
+    preferenceOff.payloadFor({ ...videoTheme, videoEnabled: false }, undefined, videoMeta),
+    preferenceOff.context,
+  );
+  assert.equal((await preferenceOff.window.__dreamSkinAttachVideo("AAAA", videoMeta)).skipped, "preference");
+  assert.equal(preferenceOff.createdVideos.length, 0);
   console.log(`PASS: unified renderer runtime (${path.basename(assetRoot)})`);
 }
 
 const fixture = { template: "" };
+
+
+
+

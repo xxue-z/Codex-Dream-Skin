@@ -161,6 +161,8 @@ try {
   assert.deepEqual(macos.output, {
     format: "official",
     image: "background.png",
+    video: null,
+    videoMetadata: null,
     safeCssStatus: "validated",
     signatureIgnored: false,
   });

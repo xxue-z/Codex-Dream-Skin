@@ -45,6 +45,7 @@ const PLACEHOLDERS = [
   "__DREAM_SKIN_CSS_JSON__",
   "__DREAM_SKIN_ART_JSON__",
   "__DREAM_SKIN_THEME_JSON__",
+  "__DREAM_SKIN_VIDEO_META_JSON__",
   "__DREAM_SKIN_VERSION_JSON__",
   "__DREAM_SKIN_STYLE_REVISION_JSON__",
   "__DREAM_SKIN_PAYLOAD_REVISION_JSON__",
@@ -108,11 +109,11 @@ function extractThemeArgument(payload) {
 }
 
 function extractPayloadArguments(payload) {
-  const marker = "((cssText, artDataUrl, themeConfig) => {";
+  const marker = "((cssText, artDataUrl, themeConfig, videoMeta) => {";
   const at = payload.indexOf(marker);
   assert.notEqual(at, -1, "payload must keep the canonical renderer IIFE signature");
   const probe = `${payload.slice(0, at + marker.length)}
-return { cssText, artDataUrl, themeConfig };
+return { cssText, artDataUrl, themeConfig, videoMeta };
 ${payload.slice(at + marker.length)}`;
   return vm.runInNewContext(probe, Object.create(null), { timeout: 10_000 });
 }
@@ -218,11 +219,12 @@ test("the payload build refuses to emit a corrupted script", async () => {
   // pre-fix behaviour by passing JSON.stringify(...) as a literal replacement
   // string, exactly as loadPayload used to.
   const fillRest = (source) => source
-    .replace("__DREAM_SKIN_CSS_JSON__", () => '""')
-    .replace("__DREAM_SKIN_ART_JSON__", () => '""')
-    .replace("__DREAM_SKIN_VERSION_JSON__", () => '"0"')
-    .replace("__DREAM_SKIN_STYLE_REVISION_JSON__", () => '"0"')
-    .replace("__DREAM_SKIN_PAYLOAD_REVISION_JSON__", () => '"0"');
+    .replaceAll("__DREAM_SKIN_CSS_JSON__", () => '""')
+    .replaceAll("__DREAM_SKIN_ART_JSON__", () => '""')
+    .replaceAll("__DREAM_SKIN_VERSION_JSON__", () => '"0"')
+    .replaceAll("__DREAM_SKIN_STYLE_REVISION_JSON__", () => '"0"')
+    .replaceAll("__DREAM_SKIN_PAYLOAD_REVISION_JSON__", () => '"0"')
+    .replaceAll("__DREAM_SKIN_VIDEO_META_JSON__", () => "null");
 
   const spliced = fillRest(
     template.replace("__DREAM_SKIN_THEME_JSON__", JSON.stringify({ name: "a$&b" })),

@@ -29,6 +29,7 @@
   --ds-focus-x: var(--dream-skin-focus-x, var(--dream-art-focus-x, 50%));
   --ds-focus-y: var(--dream-skin-focus-y, var(--dream-art-focus-y, 50%));
   --ds-art-position: var(--dream-art-position, var(--dream-skin-art-position, var(--ds-focus-x) var(--ds-focus-y)));
+  --ds-art-layer-opacity: .78;
   --ds-safe-side: left;
   --ds-hero-scrim: linear-gradient(90deg,
     rgb(var(--ds-bg-rgb) / var(--ds-upload-bg-alpha, .90)) 0%,
@@ -65,6 +66,7 @@
 
 html[data-dream-skin="active"][data-dream-shell="light"] {
   color-scheme: light !important;
+  --ds-art-layer-opacity: .72;
   --ds-bg: #f3f5f6;
   --ds-panel: #fafbfb;
   --ds-panel-2: #e9edef;
@@ -299,6 +301,43 @@ html[data-dream-skin="active"] aside.app-shell-left-panel [aria-current="page"] 
   color: var(--ds-accent) !important;
 }
 
+/* Dynamic background layer. The poster stays in the normal `--dream-skin-art`
+   background until the video has decoded its first frame; after that the
+   attribute below suppresses the poster while keeping every readability veil
+   and card scrim above the video. */
+html[data-dream-skin="active"][data-dream-video="ready"] {
+  --dream-skin-art: none !important;
+}
+
+/* Wide videos are mounted as a fixed body child with a negative z-index so
+   every app surface stays above them. The app paints opaque html/body
+   backgrounds in this mode, which would otherwise hide the layer entirely;
+   make only those two canvases transparent while the video is ready. The
+   poster path restores both backgrounds when the attribute is removed. */
+html[data-dream-skin="active"][data-dream-art-wide="true"][data-dream-video="ready"],
+html[data-dream-skin="active"][data-dream-art-wide="true"][data-dream-video="ready"] body {
+  background-color: transparent !important;
+  background-image: none !important;
+}
+
+html[data-dream-skin="active"] [data-ds-video-layer] {
+  pointer-events: none;
+}
+
+html[data-dream-skin="active"] [data-ds-video-layer] > video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: var(--ds-art-position);
+  opacity: var(--ds-art-layer-opacity, .78);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-dream-skin="active"] [data-ds-video-layer] {
+    display: none !important;
+  }
+}
 html[data-dream-skin="active"] main:is(.main-surface, [data-app-shell-main-surface], [class*="_MainContentSurface_"]) {
   position: relative !important;
   isolation: isolate;
@@ -321,11 +360,11 @@ html[data-dream-skin="active"] main:is(.main-surface, [data-app-shell-main-surfa
   background-repeat: no-repeat;
   background-position: center, center, var(--ds-art-position);
   background-size: 100% 100%, 100% 100%, cover;
-  opacity: .78;
+  opacity: var(--ds-art-layer-opacity, .78);
 }
 
 html[data-dream-skin="active"][data-dream-shell="light"] main:is(.main-surface, [data-app-shell-main-surface], [class*="_MainContentSurface_"]):not(:has([role="main"]))::before {
-  opacity: .72;
+  opacity: var(--ds-art-layer-opacity, .72);
 }
 
 html[data-dream-skin="active"]:is([data-dream-art-wide="true"], [data-dream-art-aspect="wide"], [data-dream-art-aspect="ultrawide"])
@@ -984,7 +1023,7 @@ html[data-dream-skin="active"]:not(:has(main:is(.main-surface, [data-app-shell-m
   background-repeat: no-repeat;
   background-position: center, center, var(--ds-art-position);
   background-size: 100% 100%, 100% 100%, cover;
-  opacity: .78;
+  opacity: var(--ds-art-layer-opacity, .78);
 }
 
 html[data-dream-skin="active"]:not(:has(main:is(.main-surface, [data-app-shell-main-surface], [class*="_MainContentSurface_"]))) [data-ds-part="main"] > *,
@@ -1773,6 +1812,7 @@ html[data-dream-skin="active"] [role="dialog"] [data-testid="image-preview-dismi
 html[data-dream-skin="active"] [role="dialog"]:has([data-testid="image-preview-dismiss-area"] table) [data-testid="image-preview-dismiss-area"] [class~="bg-inherit"] {
   background: transparent !important;
 }
+
 
 /* Windows 26.930 application-menu chrome already overlays the painted main.
    The macOS titlebar extension instead paints at y=0, doubling the Windows

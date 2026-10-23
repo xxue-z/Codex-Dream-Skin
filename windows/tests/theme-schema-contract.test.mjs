@@ -38,14 +38,22 @@ test("Windows runtime accepts and preserves theme schemaVersion 1", async () => 
   });
 });
 
+test("Windows runtime accepts schemaVersion 2 poster-only themes", async () => {
+  await withTheme(2, true, async (root) => {
+    const loaded = await loadTheme(root);
+    assert.equal(loaded.theme.schemaVersion, 2);
+    assert.equal(loaded.videoBytes, undefined);
+  });
+});
+
 test("Windows runtime rejects missing and future theme schema versions", async () => {
   await withTheme(undefined, false, async (root) => {
-    await assert.rejects(loadTheme(root), /must use schemaVersion 1/);
+    await assert.rejects(loadTheme(root), /must use schemaVersion 2/);
   });
-  await withTheme(2, true, async (root) => {
-    await assert.rejects(loadTheme(root), /must use schemaVersion 1/);
+  await withTheme(3, true, async (root) => {
+    await assert.rejects(loadTheme(root), /must use schemaVersion 2/);
   });
   await withTheme("1", true, async (root) => {
-    await assert.rejects(loadTheme(root), /must use schemaVersion 1/);
+    await assert.rejects(loadTheme(root), /must use schemaVersion 2/);
   });
 });

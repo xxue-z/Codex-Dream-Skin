@@ -153,10 +153,10 @@ done
 /bin/mv -f "$stage/theme.json" "$THEME_DIR/theme.json"
 if [ -n "$SAFE_CSS_NAME" ]; then
   /usr/bin/find "$THEME_DIR" -maxdepth 1 -type f \
-    ! -name 'theme.json' ! -name "$THEME_IMAGE" ! -name 'theme.css' -delete
+    ! -name 'theme.json' ! -name "$THEME_IMAGE" ! -name 'theme.css' ! -name 'background.mp4' -delete
 else
   /usr/bin/find "$THEME_DIR" -maxdepth 1 -type f \
-    ! -name 'theme.json' ! -name "$THEME_IMAGE" -delete
+    ! -name 'theme.json' ! -name "$THEME_IMAGE" ! -name 'background.mp4' -delete
 fi
 /bin/rm -rf "$stage"
 stage=""
