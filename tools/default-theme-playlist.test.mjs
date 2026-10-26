@@ -13,11 +13,11 @@ const projectRoot = path.resolve(here, "..");
 const posterA = path.join(projectRoot, "windows", "assets", "poster.jpeg");
 const posterB = path.join(projectRoot, "docs", "images", "presets", "arina-hashimoto-light.jpg");
 
-async function makeTheme({ playlist = true } = {}) {
+async function makeTheme({ playlist = true, id = "preset-arina-hashimoto" } = {}) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "dreamskin-default-theme-"));
   await fs.copyFile(posterA, path.join(dir, "poster.jpeg"));
   await fs.writeFile(path.join(dir, "theme.css"), '[data-ds-part="composer"] { border-radius: 24px; }\n');
-  const theme = { schemaVersion: 1, id: "preset-test", name: "Test", image: "poster.jpeg" };
+  const theme = { schemaVersion: 1, id, name: "Test", image: "poster.jpeg" };
   if (playlist) theme.videoPlaylist = { enabled: true };
   await fs.writeFile(path.join(dir, "theme.json"), JSON.stringify(theme, null, 2) + "\n");
   const videos = path.join(dir, "videos");
@@ -30,11 +30,13 @@ async function makeTheme({ playlist = true } = {}) {
 }
 
 test("both injectors expose the default-theme playlist in payload checks", async () => {
-  const fixture = await makeTheme();
-  for (const [name, api, options] of [
-    ["windows", windows, { videoDir: fixture.videos, posterPath: fixture.posterPath }],
-    ["macos", macos, { videoDir: fixture.videos, posterPath: fixture.posterPath }],
+  const winFixture = await makeTheme({ id: "preset-arina-hashimoto" });
+  const macFixture = await makeTheme({ id: "preset-gothic-void-crusade" });
+  for (const [name, api, fixture] of [
+    ["windows", windows, winFixture],
+    ["macos", macos, macFixture],
   ]) {
+    const options = { videoDir: fixture.videos, posterPath: fixture.posterPath };
     const loaded = api === windows
       ? await windows.loadPayload(fixture.dir, null, options)
       : await macos.loadPayload(fixture.dir, {}, options);
@@ -47,18 +49,20 @@ test("both injectors expose the default-theme playlist in payload checks", async
 });
 
 test("a valid local poster override wins for playlist themes", async () => {
-  const fixture = await makeTheme();
-  await fs.copyFile(posterB, fixture.posterPath);
-  for (const [name, api, options] of [
-    ["windows", windows, { videoDir: fixture.videos, posterPath: fixture.posterPath }],
-    ["macos", macos, { videoDir: fixture.videos, posterPath: fixture.posterPath }],
+  const winFixture = await makeTheme({ id: "preset-arina-hashimoto" });
+  const macFixture = await makeTheme({ id: "preset-gothic-void-crusade" });
+  await fs.copyFile(posterB, winFixture.posterPath);
+  await fs.copyFile(posterB, macFixture.posterPath);
+  for (const [name, api, fixture] of [
+    ["windows", windows, winFixture],
+    ["macos", macos, macFixture],
   ]) {
     const baseLoaded = api === windows
       ? await windows.loadPayload(fixture.dir, null, { videoDir: fixture.videos })
       : await macos.loadPayload(fixture.dir, {}, { videoDir: fixture.videos });
     const loaded = api === windows
-      ? await windows.loadPayload(fixture.dir, null, options)
-      : await macos.loadPayload(fixture.dir, {}, options);
+      ? await windows.loadPayload(fixture.dir, null, { videoDir: fixture.videos, posterPath: fixture.posterPath })
+      : await macos.loadPayload(fixture.dir, {}, { videoDir: fixture.videos, posterPath: fixture.posterPath });
     assert.equal(loaded.posterOverride, true, name);
     if (typeof loaded.imageBytes === "number") {
       assert.notEqual(loaded.imageBytes, baseLoaded.imageBytes, name);
