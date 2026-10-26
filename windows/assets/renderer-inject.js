@@ -144,6 +144,38 @@
   };
 
   const previous = window[STATE_KEY];
+  // A tray apply injects twice: the running watcher notices the new active
+  // theme, then the freshly started daemon injects the same payload again.
+  // cleanup() strips every themed attribute and the stylesheet before the
+  // rebuilt payload restores them, so that second identical install showed up
+  // as the window flashing twice. When the live install still matches this
+  // payload, keep it and only run the cheap idempotent pass.
+  const payloadThemeId = THEME.id || "custom";
+  const previousStyleLive = Boolean(previous) && (
+    previous.styleMode === "adopted"
+      ? Boolean(previous.styleSheet) &&
+        Array.prototype.includes.call(document.adoptedStyleSheets || [], previous.styleSheet)
+      : Boolean(document.getElementById(STYLE_ID))
+  );
+  if (
+    previous &&
+    previous.revision === PAYLOAD_REVISION &&
+    previous.themeId === payloadThemeId &&
+    previous.styleRevision === STYLE_REVISION &&
+    previousStyleLive &&
+    !window[DISABLED_KEY] &&
+    document.documentElement?.getAttribute("data-dream-skin") === "active"
+  ) {
+    previous.ensure?.({ root: true });
+    return {
+      installed: true,
+      reused: true,
+      version: VERSION,
+      themeId: payloadThemeId,
+      revision: PAYLOAD_REVISION,
+      styleMode: previous.styleMode,
+    };
+  }
   if (typeof previous?.cleanup === "function") previous.cleanup();
   window[DISABLED_KEY] = false;
 
