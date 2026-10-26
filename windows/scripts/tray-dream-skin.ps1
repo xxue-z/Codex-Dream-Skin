@@ -273,14 +273,16 @@ try {
   function Set-DreamSkinTrayVideoState {
     param(
       [Parameter(Mandatory = $true)][bool]$Muted,
-      [Parameter(Mandatory = $true)][bool]$Paused
+      [Parameter(Mandatory = $true)][bool]$Paused,
+      [bool]$SoftVeil = $true
     )
     $node = Get-DreamSkinNodeRuntime
     $injector = Join-Path $PSScriptRoot 'injector.mjs'
     $result = Invoke-DreamSkinNative -FilePath $node.Path -ArgumentList @(
       $injector, '--video-state', '--port', "$Port",
       '--muted', $(if ($Muted) { 'true' } else { 'false' }),
-      '--paused', $(if ($Paused) { 'true' } else { 'false' })
+      '--paused', $(if ($Paused) { 'true' } else { 'false' }),
+      '--soft-veil', $(if ($SoftVeil) { 'true' } else { 'false' })
     ) -SeparateStderr
     if ($result.ExitCode -ne 0) {
       $detail = (($result.Output + $result.ErrorOutput) -join "`n").Trim()
@@ -431,6 +433,115 @@ try {
     } else {
       $activeId = ''
       try { $activeId = "$((Read-DreamSkinTheme -ThemeDirectory $paths.Active -SkipImageMetadata).Theme.id)" } catch {}
+      $playlistThemeIds = @()
+      foreach ($saved in $savedThemes) {
+        $isPlaylist = $false
+        try {
+          $probeTheme = Read-DreamSkinTheme -ThemeDirectory $saved.Path -SkipImageMetadata
+          if ($probeTheme.Theme.PSObject.Properties['videoPlaylist'] -and
+              $null -ne $probeTheme.Theme.videoPlaylist -and
+              $probeTheme.Theme.videoPlaylist.enabled -eq $true) {
+            $isPlaylist = $true
+          }
+        } catch {}
+        if (-not $isPlaylist) { continue }
+        $playlistThemeIds += "$($saved.Id)"
+        $playlistId = "$($saved.Id)"
+        $playlistName = $saved.Name
+        $playlistPath = $saved.Path
+        $themeMenu = [System.Windows.Forms.ToolStripMenuItem]::new($playlistName)
+        $applyAction = {
+          Start-DreamSkinVerifiedTrayApply -ThemeName $playlistName -ThemeDirectory $playlistPath
+        }.GetNewClosure()
+        $null = Add-DreamSkinTrayItem -Items $themeMenu.DropDownItems `
+          -Text (Get-DreamSkinTrayText -Key 'Apply') -Action $applyAction
+        [void]$themeMenu.DropDownItems.Add([System.Windows.Forms.ToolStripSeparator]::new())
+        $playlistPreference = Get-DreamSkinPlaylistPreference -StateRoot $StateRoot
+        $muteAction = {
+          try {
+            $current = Get-DreamSkinPlaylistPreference -StateRoot $StateRoot
+            $next = -not $current.Muted
+            Set-DreamSkinPlaylistPreference -StateRoot $StateRoot -Muted $next
+            if ($activeId -ceq $playlistId) {
+              Set-DreamSkinTrayVideoState -Muted $next -Paused $current.Paused -SoftVeil $current.SoftVeil
+            }
+            Rebuild-DreamSkinTrayMenu
+          } catch { Show-DreamSkinTrayError -Message $_.Exception.Message }
+        }.GetNewClosure()
+        $null = Add-DreamSkinTrayItem -Items $themeMenu.DropDownItems `
+          -Text (Get-DreamSkinTrayText -Key 'VideoMute') -Action $muteAction `
+          -Checked $playlistPreference.Muted
+        $pauseAction = {
+          try {
+            $current = Get-DreamSkinPlaylistPreference -StateRoot $StateRoot
+            $next = -not $current.Paused
+            Set-DreamSkinPlaylistPreference -StateRoot $StateRoot -Paused $next
+            if ($activeId -ceq $playlistId) {
+              Set-DreamSkinTrayVideoState -Muted $current.Muted -Paused $next -SoftVeil $current.SoftVeil
+            }
+            Rebuild-DreamSkinTrayMenu
+          } catch { Show-DreamSkinTrayError -Message $_.Exception.Message }
+        }.GetNewClosure()
+        $null = Add-DreamSkinTrayItem -Items $themeMenu.DropDownItems `
+          -Text (Get-DreamSkinTrayText -Key 'VideoPause') -Action $pauseAction `
+          -Checked $playlistPreference.Paused
+        $softVeilAction = {
+          try {
+            $current = Get-DreamSkinPlaylistPreference -StateRoot $StateRoot
+            $next = -not $current.SoftVeil
+            Set-DreamSkinPlaylistPreference -StateRoot $StateRoot -SoftVeil $next
+            if ($activeId -ceq $playlistId) {
+              Set-DreamSkinTrayVideoState -Muted $current.Muted -Paused $current.Paused -SoftVeil $next
+            }
+            Rebuild-DreamSkinTrayMenu
+          } catch { Show-DreamSkinTrayError -Message $_.Exception.Message }
+        }.GetNewClosure()
+        $null = Add-DreamSkinTrayItem -Items $themeMenu.DropDownItems `
+          -Text (Get-DreamSkinTrayText -Key 'VideoSoftVeil') -Action $softVeilAction `
+          -Checked $playlistPreference.SoftVeil
+        [void]$themeMenu.DropDownItems.Add([System.Windows.Forms.ToolStripSeparator]::new())
+        $changePosterAction = {
+          try {
+            $dialog = [System.Windows.Forms.OpenFileDialog]::new()
+            $dialog.Title = Get-DreamSkinTrayText -Key 'PlaylistChangePoster'
+            $dialog.Filter = 'JPEG image (*.jpg;*.jpeg)|*.jpg;*.jpeg'
+            $dialog.CheckFileExists = $true
+            $dialog.Multiselect = $false
+            if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+              Set-DreamSkinPlaylistPoster -SourcePath $dialog.FileName -StateRoot $StateRoot
+              Rebuild-DreamSkinTrayMenu
+            }
+          } catch { Show-DreamSkinTrayError -Message $_.Exception.Message }
+        }.GetNewClosure()
+        $null = Add-DreamSkinTrayItem -Items $themeMenu.DropDownItems `
+          -Text (Get-DreamSkinTrayText -Key 'PlaylistChangePoster') -Action $changePosterAction
+        $restorePosterAction = {
+          try {
+            Restore-DreamSkinPlaylistPoster -StateRoot $StateRoot
+            Rebuild-DreamSkinTrayMenu
+          } catch { Show-DreamSkinTrayError -Message $_.Exception.Message }
+        }.GetNewClosure()
+        $null = Add-DreamSkinTrayItem -Items $themeMenu.DropDownItems `
+          -Text (Get-DreamSkinTrayText -Key 'PlaylistRestorePoster') -Action $restorePosterAction
+        $openVideosAction = {
+          try { Open-DreamSkinVideosFolder -StateRoot $StateRoot }
+          catch { Show-DreamSkinTrayError -Message $_.Exception.Message }
+        }.GetNewClosure()
+        $null = Add-DreamSkinTrayItem -Items $themeMenu.DropDownItems `
+          -Text (Get-DreamSkinTrayText -Key 'PlaylistOpenVideos') -Action $openVideosAction
+        $rescanAction = {
+          try {
+            Request-DreamSkinPlaylistRescan -StateRoot $StateRoot
+            Rebuild-DreamSkinTrayMenu
+          } catch { Show-DreamSkinTrayError -Message $_.Exception.Message }
+        }.GetNewClosure()
+        $null = Add-DreamSkinTrayItem -Items $themeMenu.DropDownItems `
+          -Text (Get-DreamSkinTrayText -Key 'PlaylistRescan') -Action $rescanAction
+        [void]$savedMenu.DropDownItems.Add($themeMenu)
+      }
+      if ($playlistThemeIds.Count -gt 0) {
+        $savedThemes = @($savedThemes | Where-Object { $playlistThemeIds -notcontains "$($_.Id)" })
+      }
       foreach ($saved in $savedThemes) {
         $savedPath = $saved.Path
         $savedName = $saved.Name

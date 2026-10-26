@@ -543,6 +543,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
       addDisabledItem(copy.text(.noSavedThemes), to: submenu)
     } else {
       for theme in themes {
+        if theme.playlistEnabled {
+          let themeRoot = NSMenuItem(title: theme.name, action: nil, keyEquivalent: "")
+          let themeMenu = NSMenu(title: theme.name)
+          themeMenu.autoenablesItems = false
+          let applyItem = addActionItem(
+            copy.text(.apply),
+            action: #selector(switchSavedTheme(_:)),
+            enabled: enabled,
+            to: themeMenu
+          )
+          applyItem.representedObject = theme.id
+          if theme.id == snapshot.themeID { applyItem.state = .on }
+          themeMenu.addItem(.separator())
+          let playlist = PlaylistPreferencesStore.load(stateRoot: stateRootURL)
+          let muteItem = addActionItem(copy.text(.videoMute),
+                                       action: #selector(togglePlaylistMute(_:)),
+                                       enabled: enabled, to: themeMenu)
+          muteItem.state = playlist.muted ? .on : .off
+          let pauseItem = addActionItem(copy.text(.videoPause),
+                                        action: #selector(togglePlaylistPause(_:)),
+                                        enabled: enabled, to: themeMenu)
+          pauseItem.state = playlist.paused ? .on : .off
+          let veilItem = addActionItem(copy.text(.videoSoftVeil),
+                                       action: #selector(togglePlaylistSoftVeil(_:)),
+                                       enabled: enabled, to: themeMenu)
+          veilItem.state = playlist.softVeil ? .on : .off
+          themeMenu.addItem(.separator())
+          addActionItem(copy.text(.changePoster), action: #selector(choosePlaylistPoster),
+                        enabled: enabled, to: themeMenu)
+          addActionItem(copy.text(.restoreDefaultPoster), action: #selector(restorePlaylistPoster),
+                        enabled: enabled, to: themeMenu)
+          addActionItem(copy.text(.openVideosFolder), action: #selector(openVideosFolder),
+                        enabled: enabled, to: themeMenu)
+          addActionItem(copy.text(.rescanVideos), action: #selector(rescanVideos),
+                        enabled: enabled, to: themeMenu)
+          themeRoot.submenu = themeMenu
+          submenu.addItem(themeRoot)
+          continue
+        }
         let item = addActionItem(
           theme.name,
           action: #selector(switchSavedTheme(_:)),
@@ -676,7 +715,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
         return nil
       }
       let rawName = value["name"] as? String ?? id
-      return SavedThemeOption(id: id, name: cleanMenuText(rawName))
+      let playlistEnabled = ((value["videoPlaylist"] as? [String: Any])?["enabled"] as? Bool) == true
+      return SavedThemeOption(id: id, name: cleanMenuText(rawName), playlistEnabled: playlistEnabled)
     }
     let deduplicated = deduplicatedSavedThemes(options, currentThemeID: snapshot.themeID).sorted {
       $0.name.localizedStandardCompare($1.name) == .orderedAscending
@@ -751,6 +791,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
       arguments: ["--file", imageURL.path],
       operation: copy.text(.changeBackground).replacingOccurrences(of: "…", with: "")
     )
+  }
+
+  @objc private func togglePlaylistMute(_ sender: NSMenuItem) {
+    let next = !PlaylistPreferencesStore.load(stateRoot: stateRootURL).muted
+    runPlaylistScript(arguments: ["set", "muted", next ? "true" : "false"])
+  }
+
+  @objc private func togglePlaylistPause(_ sender: NSMenuItem) {
+    let next = !PlaylistPreferencesStore.load(stateRoot: stateRootURL).paused
+    runPlaylistScript(arguments: ["set", "paused", next ? "true" : "false"])
+  }
+
+  @objc private func togglePlaylistSoftVeil(_ sender: NSMenuItem) {
+    let next = !PlaylistPreferencesStore.load(stateRoot: stateRootURL).softVeil
+    runPlaylistScript(arguments: ["set", "soft-veil", next ? "true" : "false"])
+  }
+
+  @objc private func choosePlaylistPoster() {
+    let panel = NSOpenPanel()
+    panel.title = copy.text(.changePoster)
+    panel.prompt = copy.resolvedLanguage == .chinese ? "选择" : "Choose"
+    panel.canChooseDirectories = false
+    panel.canChooseFiles = true
+    panel.allowsMultipleSelection = false
+    panel.allowedContentTypes = [.jpeg]
+    activateForUserInteraction()
+    guard panel.runModal() == .OK, let imageURL = panel.url else { return }
+    runPlaylistScript(arguments: ["poster", imageURL.path])
+  }
+
+  @objc private func restorePlaylistPoster() {
+    runPlaylistScript(arguments: ["restore-poster"])
+  }
+
+  @objc private func openVideosFolder() {
+    runPlaylistScript(arguments: ["open-videos"])
+  }
+
+  @objc private func rescanVideos() {
+    runPlaylistScript(arguments: ["rescan"])
+  }
+
+  private func runPlaylistScript(arguments: [String]) {
+    guard let script = installedScript(named: "playlist-macos.sh") else { return }
+    ScriptRunner.run(script: script, arguments: arguments) { [weak self] result in
+      guard let self else { return }
+      if !result.succeeded {
+        self.showError(title: self.copy.text(.busyTitle), message: result.output)
+      }
+      self.rebuildMenu()
+    }
   }
 
   @objc private func chooseThemeArchive() {
