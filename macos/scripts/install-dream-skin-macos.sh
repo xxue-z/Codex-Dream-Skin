@@ -90,9 +90,6 @@ fi
 
 require_macos_runtime
 ensure_state_root
-if [ ! -f "$STATE_ROOT/poster.jpeg" ] && [ -f "$PROJECT_ROOT/assets/poster.jpeg" ]; then
-  /bin/cp "$PROJECT_ROOT/assets/poster.jpeg" "$STATE_ROOT/poster.jpeg"
-fi
 codex_is_running && fail "Close Codex before installation so config.toml cannot be rewritten while the app is saving it."
 seed_bundled_presets
 if [ ! -f "$THEME_DIR/theme.json" ]; then

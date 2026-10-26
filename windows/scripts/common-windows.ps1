@@ -475,7 +475,6 @@ function Install-DreamSkinRuntimeEngine {
     'assets\mp4-metadata.mjs',
     'assets\theme-preferences.mjs',
     'assets\video-playlist.mjs',
-    'assets\poster.jpeg',
     'assets\theme.json',
     'presets\preset-gothic-void-crusade\background.jpg',
     'presets\preset-gothic-void-crusade\theme.json',

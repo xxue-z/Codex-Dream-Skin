@@ -20,7 +20,6 @@ runtime/*
 !runtime/theme-preferences.mjs
 !runtime/mp4-metadata.mjs
 !runtime/video-playlist.mjs
-!runtime/poster.jpeg
 !runtime/validate-safe-css-file.mjs
 
 # local agent context

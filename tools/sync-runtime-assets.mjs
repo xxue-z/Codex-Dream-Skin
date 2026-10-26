@@ -223,14 +223,6 @@ const outputs = [
   },
 ];
 
-// Binary assets are synced byte-for-byte so the two platform trees cannot drift.
-const binaryOutputs = [
-  {
-    content: await fs.readFile(path.join(projectRoot, "runtime", "poster.jpeg")),
-    paths: ["macos/assets/poster.jpeg", "windows/assets/poster.jpeg"],
-  },
-];
-
 let mismatches = 0;
 for (const output of outputs) {
   for (const relativePath of output.paths) {
@@ -243,22 +235,6 @@ for (const output of outputs) {
       }
     } else {
       await fs.writeFile(outputPath, output.content, "utf8");
-      console.log(`updated=${relativePath}`);
-    }
-  }
-}
-
-for (const output of binaryOutputs) {
-  for (const relativePath of output.paths) {
-    const outputPath = path.join(projectRoot, relativePath);
-    if (checkOnly) {
-      const current = await fs.readFile(outputPath).catch(() => null);
-      if (!current || !current.equals(output.content)) {
-        console.error(`out-of-date=${relativePath}`);
-        mismatches += 1;
-      }
-    } else {
-      await fs.writeFile(outputPath, output.content);
       console.log(`updated=${relativePath}`);
     }
   }

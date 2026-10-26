@@ -8,7 +8,7 @@
   "projectLabel": "◉  选择项目",
   "statusText": "THEME ONLINE",
   "quote": "Make something wonderful",
-  "image": "poster.jpeg",
+  "image": "portal-hero.png",
   "colors": {
     "background": "#F7F4F5",
     "panel": "#FFFFFF",
@@ -23,8 +23,5 @@
   },
   "promoTitle": "感谢 Passion8 赞助",
   "promoSub": "passion8.cc",
-  "promoUrl": "https://passion8.cc/register?aff=TuPe",
-  "videoPlaylist": {
-    "enabled": true
-  }
+  "promoUrl": "https://passion8.cc/register?aff=TuPe"
 }
