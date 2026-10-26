@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param([switch]$EngineOnly)
 
 $ErrorActionPreference = 'Stop'
@@ -1525,7 +1525,9 @@ try {
     }
   }
   $node = Get-DreamSkinNodeRuntime
-  & (Join-Path $PSScriptRoot 'community-theme-link.tests.ps1') -Root $Root
+  & (Join-Path $PSScriptRoot 'community-theme-uri-contract.tests.ps1') -Root $Root
+  & (Join-Path $PSScriptRoot 'community-theme-source-contract.tests.ps1') -Root $Root
+  & (Join-Path $PSScriptRoot 'community-theme-behavior.tests.ps1') -Root $Root
   & (Join-Path $PSScriptRoot 'native-stderr.tests.ps1') -Root $Root
   & (Join-Path $PSScriptRoot 'theme-zip-import.tests.ps1') -Root $Root
   & (Join-Path $PSScriptRoot 'theme-video-preferences.tests.ps1') -Root $Root
