@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param([switch]$EngineOnly)
 
 $ErrorActionPreference = 'Stop'
@@ -1528,6 +1528,7 @@ try {
   & (Join-Path $PSScriptRoot 'community-theme-link.tests.ps1') -Root $Root
   & (Join-Path $PSScriptRoot 'native-stderr.tests.ps1') -Root $Root
   & (Join-Path $PSScriptRoot 'theme-zip-import.tests.ps1') -Root $Root
+  & (Join-Path $PSScriptRoot 'theme-video-preferences.tests.ps1') -Root $Root
   & (Join-Path $PSScriptRoot 'config-startup-rollback.tests.ps1') -Root $Root
   & (Join-Path $PSScriptRoot 'start-result-contract.tests.ps1') -Root $Root
   & (Join-Path $PSScriptRoot 'tray-apply-result.tests.ps1')
@@ -1672,3 +1673,4 @@ try {
 } finally {
   Remove-Item -LiteralPath $temporaryRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
+

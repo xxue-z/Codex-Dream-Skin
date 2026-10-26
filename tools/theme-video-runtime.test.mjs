@@ -97,16 +97,17 @@ test("both platforms load and hash a schemaVersion 2 video theme", async () => {
 test("video preference disables playback without dropping the video contract", async () => {
   const dir = await makeTheme();
   const preferencesPath = path.join(dir, "preferences.json");
-  await fs.writeFile(preferencesPath, JSON.stringify({
+  await fs.writeFile(path.join(dir, "theme-video-preferences.json"), JSON.stringify({
     schemaVersion: 1,
     videoBackground: false,
-    themes: { "runtime.video": { videoPaused: true } },
+    themes: { "runtime.video": { paused: true, muted: false } },
   }));
   try {
     for (const api of [macos, windows]) {
       const loaded = await api.loadTheme(dir, { preferencesPath });
       assert.equal(loaded.theme.videoEnabled, false);
       assert.equal(loaded.theme.videoPaused, true);
+      assert.equal(loaded.theme.videoMuted, false);
       assert.ok(loaded.videoBytes.length > 0);
     }
   } finally {
@@ -137,3 +138,5 @@ test("invalid MP4 and legacy-video combinations fail closed", async () => {
     await fs.rm(legacy, { recursive: true, force: true });
   }
 });
+
+

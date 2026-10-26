@@ -12,7 +12,7 @@
 - `runtime/mp4-metadata.mjs` 有界结构解析器与稳定错误码；Windows / macOS 校验器、导入路径和运行时都使用同一份实现。
 - 双端 injector 读取视频、计算 `videoKey`，并通过 `Runtime.callFunctionOn` 传递字节；`--check-payload` 不连接 CDP 即可校验。
 - 渲染层支持任务页主表面、首页 hero、宽图 `body` 三个挂载点；海报回退、可视性暂停、减少动态效果、清理和 Blob 撤销已接入。
-- 主题偏好支持全局 `videoBackground` 与每主题 `videoPaused`（读取层已接入；原生设置 UI 尚未添加）。
+- 主题偏好使用独立的 `theme-video-preferences.json`，支持全局 `videoBackground` 与每主题 `muted` / `paused`；托盘动态主题菜单已接入勾选式“静音/暂停”控制。
 
 待完成：
 
@@ -30,7 +30,7 @@
 2. **有界校验**：新增一个只读 MP4 结构解析器，限制容器、轨道、编码、分辨率、时长、体积和元数据；不引入 ffmpeg，不做转码。
 3. **独立传输通道**：视频字节不能拼进 `renderer-inject.js` 的模板字面量，否则会产生 20 MB 级别的 JS 源码。改为在主注入完成后，用一次 `Runtime.callFunctionOn` 把 base64 作为参数传给页面，页面内组装 `Blob` 并播放。
 
-首版建议上限：**H.264 / 8-bit / 无音轨 / 非分片 MP4 / 1920x1080 / 2-20 秒 / 16 MiB**。
+首版建议上限：**H.264 / 8-bit / 最多 1 条音轨 / 非分片 MP4 / 1920x1080 / 2-20 秒 / 16 MiB**。
 静态海报继续沿用现有 10 MiB 图片上限，主题 ZIP 仍控制在现有 32 MiB 归档上限内。
 
 ## 1. 现状与约束
@@ -56,7 +56,7 @@
 
 ### 2.1 目标
 
-- 一个主题包可以携带**一段**短视频作为窗口壁纸，静音、循环、自动播放。
+- 一个主题包可以携带**一段**短视频作为窗口壁纸，默认静音、循环、自动播放；托盘以勾选方式切换“静音”和“暂停”。
 - 视频与静态海报使用同一套构图参数：`art.focusX`、`art.focusY`、`art.safeArea`、`art.taskMode`，切换静态/动态时裁切位置不跳变。
 - 视频不可用时（编码不支持、自动播放被拒、用户关闭、系统减少动态效果）**无缝回落到海报**，不出现黑屏。
 - 旧主题包行为完全不变；旧客户端遇到新主题包时给出明确错误，而不是静默降级。
@@ -65,7 +65,7 @@
 
 ### 2.2 非目标
 
-- 不做音轨、音量、播放/暂停控件、进度条、拖动预览。
+- 不做音量滑杆、进度条、拖动预览或多音轨；最多一条音轨，播放/暂停与静音由托盘控制。
 - 不做多视频、播放列表、按页面切换视频、在线视频 URL。
 - 不做 GIF / APNG / 动画 WebP 的正式支持。
 - 不做转码、压缩、裁剪、抽帧。作者必须自己提供合规 MP4。
@@ -223,10 +223,10 @@ ZIP 内视频允许 store 或 deflate；MP4 本身几乎不可压缩，压缩方
 | 样本格式 | `avc1` | `avc3`、`hev1`、`hvc1`、`vp09`、`av01`、`encv` |
 | Profile | H.264 Baseline / Main / High（`profile_idc` 66 / 77 / 100） | High 10、High 4:2:2、High 4:4:4 等 10-bit / 高位深 |
 | 像素格式 | 8-bit 4:2:0 | 10-bit、4:2:2、4:4:4 |
-| 音频 | 无音轨 | 任意音轨（包括静音音轨） |
+| 音频 | 最多 1 条音轨；默认静音，托盘可勾选“静音/暂停” | 2 条以上音轨 |
 | 元数据 | 普通 `udta` / `ilst` 允许 | 含 GPS 的 `©xyz` / `©loc` |
 
-"无音轨"是硬性要求：静音自动播放是浏览器的稳定路径，带音轨会触发自动播放策略，也会让用户在换肤时意外听到声音。
+音轨是允许的，但默认静音：静音自动播放是浏览器的稳定路径；取消静音和恢复播放由托盘动作触发，并通过带用户手势的 CDP 调用启动，避免自动播放策略把有声视频挡住。用户取消静音后如果浏览器仍拒绝播放，保留海报并允许再次点击播放。
 
 ### 4.2 有界解析器
 
@@ -260,7 +260,7 @@ ZIP 内视频允许 store 或 deflate；MP4 本身几乎不可压缩，压缩方
 | `video.fragmented` | 分片 MP4 |
 | `video.moov` | `moov` 缺失或自身超过 2 MiB |
 | `video.track_count` | 视频轨数量不为 1 |
-| `video.audio_track` | 存在音轨 |
+| `video.audio_track` | 超过 1 条音轨 |
 | `video.extra_track` | 存在字幕、文本或数据轨 |
 | `video.codec` | 样本格式不是 `avc1` |
 | `video.profile` | 非 8-bit Baseline/Main/High |
@@ -290,7 +290,7 @@ ffmpeg -i input.mov \
 
 要求：
 
-- `-an` 去掉音轨。
+- `-an` 去掉音轨；如果主题需要声音，可保留一条 AAC 音轨，客户端默认静音，由用户在托盘中取消静音。
 - `-pix_fmt yuv420p` 保证 8-bit 4:2:0。
 - `-movflags +faststart` 把 `moov` 放到文件头；这是推荐但不是客户端要求。
 - 20 秒、6 Mbps 上限，16 MiB 内基本能保证画质。
@@ -376,7 +376,7 @@ ffmpeg -i input.mov \
 
 - `main::before` 继续负责 `--ds-task-fade`、`--ds-task-shade` 等可读性遮罩。
 - 视频就绪前，`main::before` 保留海报层；视频 `loadeddata` 后给 `html` 加 `data-dream-video="ready"`，CSS 只移除海报那一层，遮罩保留。
-- 视频失败或暂停时移除 `data-dream-video`，海报立即回来。
+- 视频失败、用户关闭动态背景、减少动态效果或任务模式隐藏时移除 `data-dream-video`，海报立即回来；用户主动暂停时保留当前帧。
 - 视频层不接收指针事件，`aria-hidden="true"`，不进入 Tab 顺序。
 
 **taskMode**：
@@ -397,7 +397,7 @@ ffmpeg -i input.mov \
 
 ```html
 <video
-  muted
+  muted="true|omitted"
   playsinline
   loop
   autoplay
@@ -408,8 +408,10 @@ ffmpeg -i input.mov \
 ></video>
 ```
 
-- **自动播放**：静音 + `playsinline` 是 Chromium 的稳定自动播放路径。`play()` 返回的 Promise 必须捕获；被拒绝就回落海报，不重试轰炸。
-- **可见性**：`document.visibilityState === "hidden"` 时 `pause()`；恢复可见且用户开启时再 `play()`。窗口失焦但可见不暂停。
+- **默认静音**：`videoMuted` 默认 `true`。静音 + `playsinline` 是 Chromium 的稳定自动播放路径。`play()` 返回的 Promise 必须捕获；被拒绝就回落海报，不重试轰炸。
+- **取消静音 / 恢复播放**：托盘动作先写入 `videoMuted` / `videoPaused`，再通过带 `userGesture: true` 的 CDP 调用更新当前页面，允许有声播放。取消静音后如果浏览器仍拒绝播放，保留海报并允许再次点击播放。
+- **用户暂停**：`videoPaused` 为真时暂停解码但保留 `data-dream-video="ready"`，冻结当前帧；只有失败、关闭动态背景、减少动态效果或任务模式隐藏时才回退海报。
+- **可见性**：`visibilityState === "hidden"` 且窗口失焦时 `pause()`；恢复可见/聚焦且用户未暂停时再 `play()`。
 - **减少动态效果**：`matchMedia("(prefers-reduced-motion: reduce)")` 命中时不创建视频，只显示海报。监听变化，用户中途切换系统设置时同步。
 - **用户开关**：主题偏好新增全局 `videoBackground`（默认 `true`）。关闭时不创建视频，海报照常显示。
 - **主题切换 / 重注入**：`cleanup()` 必须先 `pause()`、清 `src`、`load()`、移除节点、`URL.revokeObjectURL()`，再注入新主题。
@@ -471,8 +473,8 @@ ffmpeg -i input.mov \
 | `runtime/mp4-metadata.test.mjs`（新增） | 结构解析单测；合成 box 树；边界与攻击样本 |
 | `runtime/renderer-inject.js` | `__dreamSkinAttachVideo`、挂载点选择、播放生命周期、清理、诊断计数 |
 | `runtime/dream-skin.css` | 视频层、海报/遮罩切换、亮暗透明度、`prefers-reduced-motion`、宽图 body 模式 |
-| `runtime/theme-preferences.mjs` | 全局 `videoBackground` 与可选 per-theme `videoPaused`；保持 `schemaVersion 1`，未知字段兼容 |
-| `windows/scripts/injector.mjs` | 读取视频、`videoKey`、revision 纳入视频哈希、`callFunctionOn` attach、`--check-payload` |
+| `runtime/theme-preferences.mjs` | 独立 `theme-video-preferences.json`：全局 `videoBackground` 与每主题 `muted` / `paused`；避免改变既有透明度偏好 schema |
+| `windows/scripts/injector.mjs` | 读取视频、`videoKey`、revision 纳入视频哈希、`callFunctionOn` attach、`--check-payload`、`--video-state` 静音/暂停控制 |
 | `macos/scripts/injector.mjs` | 同上，保持双端逻辑一致 |
 | `windows/scripts/theme-windows.ps1` | 导入校验、错误码文案、内容指纹、动态背景开关 UI |
 | `windows/scripts/common-windows.ps1` | 主题元数据/路径检查扩展到视频文件 |
@@ -515,8 +517,8 @@ ffmpeg -i input.mov \
 12. `ftyp` 错误、QuickTime、WebM、裸流。
 13. `moov` 缺失或自身超过 2 MiB、分片 `moof`；`moov` 位于 `mdat` 之后应通过。
 14. box 长度溢出、嵌套过深、box 数量超限。
-15. 0/2 条视频轨、音轨、字幕轨、数据轨。
-16. `avc3` / `hev1` / `hvc1` / `vp09` / `av01` / `encv`。
+15. 0/2 条视频轨、2 条以上音轨、字幕轨、数据轨；1 条音轨应通过。
+16. `avc3` / `hev1` / `hvc1` / `vp09` / `av01` / `encv`；音频轨不要求解码验证。
 17. High 10 / 4:2:2 / 4:4:4。
 18. 分辨率 1920x1080 通过；1921 宽、3840x2160、0x0 拒绝。
 19. 宽高比 1.2 / 2.4 通过；1.19 / 2.41 拒绝。
@@ -607,7 +609,7 @@ Phase 0 必须先回答的三个问题：
 
 | 编号 | 决策 | 理由 |
 | --- | --- | --- |
-| D1 | 只支持 H.264 8-bit 无音轨 MP4 | 兼容性最好、校验面最小、无自动播放声音问题 |
+| D1 | H.264 8-bit，最多 1 条音轨，默认静音 | 兼容性最好；音轨可选，取消静音由明确的用户动作触发 |
 | D2 | 海报必填，视频可选 | 统一回退、加载占位、减少动态效果、旧生态预览 |
 | D3 | Skin API 2，不兼容旧客户端 | 严格字段集下无法"半支持"；明确拒绝优于静默忽略 |
 | D4 | 视频不走模板字面量，走 `callFunctionOn` 参数 | 避免 20 MB 级 JS 源码解析，降低重注入成本 |
@@ -680,5 +682,8 @@ parseMp4(bytes):
 7. 记录 Windows 11 与 macOS 的机器型号、Codex 版本、Electron 版本、GPU。
 
 探针结果写回本文档的"风险与开放问题"或单独 `docs/mp4-video-background-spike.md`，再决定是否进入 P1。
+
+
+
 
 

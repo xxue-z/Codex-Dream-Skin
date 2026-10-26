@@ -169,7 +169,7 @@ For themes from DreamSkin.cc, prefer [one-click apply](#theme-library--community
 
 Choose **Import Theme ZIP…** from the macOS menu bar app or the Windows tray. Only ordinary `.zip` files are accepted; the legacy `.dreamskin` extension is not supported, and renaming the suffix is not a supported migration path.
 
-An official Studio pack contains `manifest.json`, `theme.json`, `theme.css` and exactly one `background.webp|jpg|png`, plus optional `LICENSE.txt` and the reserved `manifest.sig`. Put these files at the ZIP root or inside exactly one top-level theme folder. The importer verifies platform and minimum-client compatibility plus every declared payload file's byte length and SHA-256. `theme.css` must pass the local Safe CSS validator and can affect only the 12 registered parts; it is revalidated on every import and apply. `manifest.sig` is not used for signature verification. A Skin API 2 pack may also carry one optional `background.mp4` dynamic background (H.264, no audio, 2-20 s, up to 1920x1080, 16 MiB); it still needs the matching poster and `theme.css`, and requires client 1.6.0 or newer. Older clients reject the API 2 pack explicitly.
+An official Studio pack contains `manifest.json`, `theme.json`, `theme.css` and exactly one `background.webp|jpg|png`, plus optional `LICENSE.txt` and the reserved `manifest.sig`. Put these files at the ZIP root or inside exactly one top-level theme folder. The importer verifies platform and minimum-client compatibility plus every declared payload file's byte length and SHA-256. `theme.css` must pass the local Safe CSS validator and can affect only the 12 registered parts; it is revalidated on every import and apply. `manifest.sig` is not used for signature verification. A Skin API 2 pack may also carry one optional `background.mp4` dynamic background (H.264, at most one audio track and muted by default, 2-20 s, up to 1920x1080, 16 MiB). Dynamic themes expose checkable Mute and Pause items under Saved themes in the Windows tray (checked means muted or paused); it still needs the matching poster and `theme.css`, and requires client 1.6.0 or newer. Older clients reject the API 2 pack explicitly.
 
 The local simplified ZIP must contain exactly non-empty `theme.json`, non-empty `theme.css`, and its referenced image. That format has no official manifest integrity or compatibility declaration and should come from a trusted source. Limits are 32 MiB per archive, 32 entries, and 64 MiB expanded.
 
@@ -220,3 +220,5 @@ Platform scripts are ready — different plumbing, same goal: theme Codex.
 ---
 
 Star it, pick a look, and make Codex yours for today.
+
+

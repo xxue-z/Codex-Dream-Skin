@@ -247,6 +247,23 @@ try {
     $shortcut.Save()
   }
 
+  function Set-DreamSkinTrayVideoState {
+    param(
+      [Parameter(Mandatory = $true)][bool]$Muted,
+      [Parameter(Mandatory = $true)][bool]$Paused
+    )
+    $node = Get-DreamSkinNodeRuntime
+    $injector = Join-Path $PSScriptRoot 'injector.mjs'
+    $result = Invoke-DreamSkinNative -FilePath $node.Path -ArgumentList @(
+      $injector, '--video-state', '--port', "$Port",
+      '--muted', $(if ($Muted) { 'true' } else { 'false' }),
+      '--paused', $(if ($Paused) { 'true' } else { 'false' })
+    ) -SeparateStderr
+    if ($result.ExitCode -ne 0) {
+      $detail = (($result.Output + $result.ErrorOutput) -join "`n").Trim()
+      throw $(if ($detail) { $detail } else { 'Could not update the live dynamic background state.' })
+    }
+  }
   function Rebuild-DreamSkinTrayMenu {
     $menu.Items.Clear()
     $paused = Test-DreamSkinPaused -StateRoot $StateRoot
@@ -389,13 +406,68 @@ try {
       $empty.Enabled = $false
       [void]$savedMenu.DropDownItems.Add($empty)
     } else {
+      $activeId = ''
+      try { $activeId = "$((Read-DreamSkinTheme -ThemeDirectory $paths.Active -SkipImageMetadata).Theme.id)" } catch {}
       foreach ($saved in $savedThemes) {
         $savedPath = $saved.Path
         $savedName = $saved.Name
+        $savedId = "$($saved.Id)"
+        $isDynamic = $false
+        try {
+          $savedTheme = Read-DreamSkinTheme -ThemeDirectory $savedPath -SkipImageMetadata
+          $isDynamic = [bool]$savedTheme.VideoPath
+        } catch {}
+        if (-not $isDynamic) {
+          $savedAction = {
+            Start-DreamSkinVerifiedTrayApply -ThemeName $savedName -ThemeDirectory $savedPath
+          }.GetNewClosure()
+          $null = Add-DreamSkinTrayItem -Items $savedMenu.DropDownItems -Text $savedName -Action $savedAction
+          continue
+        }
+        $themeMenu = [System.Windows.Forms.ToolStripMenuItem]::new($savedName)
         $savedAction = {
           Start-DreamSkinVerifiedTrayApply -ThemeName $savedName -ThemeDirectory $savedPath
         }.GetNewClosure()
-        $null = Add-DreamSkinTrayItem -Items $savedMenu.DropDownItems -Text $savedName -Action $savedAction
+        $null = Add-DreamSkinTrayItem -Items $themeMenu.DropDownItems `
+          -Text (Get-DreamSkinTrayText -Key 'Apply') -Action $savedAction
+        $preference = Get-DreamSkinThemeVideoPreference -ThemeId $savedId -StateRoot $StateRoot
+        $dynamicMenu = [System.Windows.Forms.ToolStripMenuItem]::new(
+          (Get-DreamSkinTrayText -Key 'DynamicTheme')
+        )
+        $muteText = Get-DreamSkinTrayText -Key 'VideoMute'
+        $muteAction = {
+          try {
+            $current = Get-DreamSkinThemeVideoPreference -ThemeId $savedId -StateRoot $StateRoot
+            $nextMuted = -not $current.Muted
+            $null = Set-DreamSkinThemeVideoPreference -ThemeId $savedId `
+              -Muted $nextMuted -StateRoot $StateRoot
+            if ($activeId -ceq $savedId) {
+              Set-DreamSkinTrayVideoState -Muted $nextMuted -Paused $current.Paused
+            }
+          } catch {
+            Show-DreamSkinTrayError -Message $_.Exception.Message
+          }
+        }.GetNewClosure()
+        $null = Add-DreamSkinTrayItem -Items $dynamicMenu.DropDownItems `
+          -Text $muteText -Action $muteAction -Checked $preference.Muted
+        $pauseText = Get-DreamSkinTrayText -Key 'VideoPause'
+        $pauseAction = {
+          try {
+            $current = Get-DreamSkinThemeVideoPreference -ThemeId $savedId -StateRoot $StateRoot
+            $nextPaused = -not $current.Paused
+            $null = Set-DreamSkinThemeVideoPreference -ThemeId $savedId `
+              -Paused $nextPaused -StateRoot $StateRoot
+            if ($activeId -ceq $savedId) {
+              Set-DreamSkinTrayVideoState -Muted $current.Muted -Paused $nextPaused
+            }
+          } catch {
+            Show-DreamSkinTrayError -Message $_.Exception.Message
+          }
+        }.GetNewClosure()
+        $null = Add-DreamSkinTrayItem -Items $dynamicMenu.DropDownItems `
+          -Text $pauseText -Action $pauseAction -Checked $preference.Paused
+        [void]$themeMenu.DropDownItems.Add($dynamicMenu)
+        [void]$savedMenu.DropDownItems.Add($themeMenu)
       }
     }
     [void]$menu.Items.Add($savedMenu)

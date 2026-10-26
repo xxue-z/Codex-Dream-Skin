@@ -1364,7 +1364,7 @@ export async function runRendererRuntimeTest(assetRoot) {
   assert.equal(fallbackState.cleanup(), true);
   assert.equal(fallback.nodes.has("codex-dream-skin-style"), false);
 
-  const videoTheme = { id: "fixture", appearance: "auto" };
+  const videoTheme = { id: "fixture", appearance: "auto", videoMuted: false };
   const videoMeta = { key: "video-key", mime: "video/mp4", bytes: 3 };
   const dynamic = makeFixture({ nativeAppearance: "dark" });
   vm.runInNewContext(dynamic.payloadFor(videoTheme, undefined, videoMeta), dynamic.context);
@@ -1379,7 +1379,9 @@ export async function runRendererRuntimeTest(assetRoot) {
   const attachResult = await attachPromise;
   assert.equal(attachResult.ready, true);
   assert.equal(dynamic.root.getAttribute("data-dream-video"), "ready");
-  assert.equal(video.muted, true);
+  assert.equal(video.muted, false);
+  assert.equal(video.volume, 1);
+  assert.equal(video.getAttribute("muted"), null);
   assert.equal(video.loop, true);
   assert.equal(video.playsInline, true);
   assert.equal(video.getAttribute("playsinline"), "");
@@ -1396,10 +1398,24 @@ export async function runRendererRuntimeTest(assetRoot) {
   dynamic.setFocus(false);
   dynamic.videoListeners.get("visibilitychange")();
   assert.equal(video.pauseCalls > 0, true);
-  assert.equal(dynamic.root.getAttribute("data-dream-video"), null);
+  assert.equal(dynamic.root.getAttribute("data-dream-video"), "ready");
   dynamic.setVisibility("visible");
   dynamic.setFocus(true);
   dynamic.videoListeners.get("visibilitychange")();
+  assert.equal(video.playing, true);
+  assert.equal(dynamic.root.getAttribute("data-dream-video"), "ready");
+  const mutedResult = dynamic.window.__dreamSkinSetVideoState({ muted: true, paused: true });
+  assert.equal(mutedResult.muted, true);
+  assert.equal(mutedResult.paused, true);
+  assert.equal(video.muted, true);
+  assert.equal(video.volume, 0);
+  assert.equal(video.playing, false);
+  assert.equal(dynamic.root.getAttribute("data-dream-video"), "ready");
+  const playResult = dynamic.window.__dreamSkinSetVideoState({ muted: false, paused: false });
+  assert.equal(playResult.muted, false);
+  assert.equal(playResult.paused, false);
+  assert.equal(video.muted, false);
+  assert.equal(video.volume, 1);
   assert.equal(video.playing, true);
   assert.equal(dynamic.root.getAttribute("data-dream-video"), "ready");
   const dynamicState = dynamic.window.__CODEX_DREAM_SKIN_STATE__;
@@ -1424,6 +1440,9 @@ export async function runRendererRuntimeTest(assetRoot) {
 }
 
 const fixture = { template: "" };
+
+
+
 
 
 

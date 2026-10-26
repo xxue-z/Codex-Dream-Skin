@@ -13,6 +13,8 @@ const preferencesPath = path.join(temp, "theme-preferences.json");
 const warnings = [];
 const options = { preferencesPath, warn: (message) => warnings.push(message) };
 const write = (themes) => fs.writeFile(preferencesPath, JSON.stringify({ schemaVersion: 1, themes }));
+const videoPreferencesPath = path.join(temp, "theme-video-preferences.json");
+const writeVideo = (data) => fs.writeFile(videoPreferencesPath, JSON.stringify({ schemaVersion: 1, ...data }));
 try {
   assert.equal(themePreferencesPath("darwin", {}, "/test"), path.join("/test", "Library", "Application Support", "CodexDreamSkinStudio", "theme-preferences.json"));
   assert.equal(themePreferencesPath("win32", { LOCALAPPDATA: "/local" }, "/test"), path.join("/local", "CodexDreamSkin", "theme-preferences.json"));
@@ -32,14 +34,10 @@ try {
     assert.equal(await readThemeTransparency("test", options), undefined);
   }
   await write({ test: { transparency: 30 } });
-  assert.deepEqual(await readThemeVideoPreference("test", options), { enabled: true, paused: false });
-  await fs.writeFile(preferencesPath, JSON.stringify({
-    schemaVersion: 1,
-    videoBackground: false,
-    themes: { test: { transparency: 30, videoPaused: true } },
-  }));
-  assert.deepEqual(await readThemeVideoPreference("test", options), { enabled: false, paused: true });
-  assert.deepEqual(await readThemeVideoPreference("absent", options), { enabled: false, paused: false });
+  assert.deepEqual(await readThemeVideoPreference("test", options), { enabled: true, paused: false, muted: true });
+  await writeVideo({ videoBackground: false, themes: { test: { paused: true, muted: false } } });
+  assert.deepEqual(await readThemeVideoPreference("test", options), { enabled: false, paused: true, muted: false });
+  assert.deepEqual(await readThemeVideoPreference("absent", options), { enabled: false, paused: false, muted: true });
   assert.ok(warnings.length > 0);
   assert.ok(warnings.every((message) => !message.includes("DO_NOT_LOG")));
   const themeDir = path.join(temp, "theme");
@@ -71,3 +69,5 @@ try {
 } finally {
   await fs.rm(temp, { recursive: true, force: true });
 }
+
+

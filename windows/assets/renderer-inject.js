@@ -974,7 +974,7 @@
     return scope;
   };
 
-  const videoPreferenceEnabled = () => THEME.videoEnabled !== false && THEME.videoPaused !== true;
+  const videoPreferenceEnabled = () => THEME.videoEnabled !== false;
   const reducedMotionQuery = () => {
     try {
       return typeof window.matchMedia === "function"
@@ -1024,16 +1024,18 @@
     else root.removeAttribute("data-dream-video");
   };
   const startVideo = () => {
-    if (!videoState?.ready || !videoState.element?.play) return;
+    if (!videoState?.ready || !videoState.element?.play || videoState.userPaused) return;
     let promise;
     try {
       promise = videoState.element.play();
     } catch {
-      setVideoReadyAttribute(false);
+      if (!videoState.userPaused) setVideoReadyAttribute(false);
       return;
     }
     if (promise && typeof promise.catch === "function") {
-      promise.catch(() => setVideoReadyAttribute(false));
+      promise.catch(() => {
+        if (!videoState?.userPaused) setVideoReadyAttribute(false);
+      });
     }
   };
   const pauseVideo = () => {
@@ -1056,13 +1058,19 @@
       return;
     }
     videoState.layer.style.display = "";
-    if (videoState.ready) {
-      // Keep the poster until the media element is actually playing. Some
-      // Chromium builds resolve play() while the window is occluded and never
-      // leave the paused state; the `playing` event below is the real signal.
-      if (!videoState.element.paused) setVideoReadyAttribute(true);
-      startVideo();
+    if (!videoState.ready) return;
+    if (videoState.userPaused) {
+      // A user pause freezes the current frame; it must not bring the poster
+      // back or hide the video layer.
+      pauseVideo();
+      setVideoReadyAttribute(true);
+      return;
     }
+    // Keep the poster until the media element is actually playing. Some
+    // Chromium builds resolve play() while the window is occluded and never
+    // leave the paused state; the `playing` event below is the real signal.
+    if (!videoState.element.paused) setVideoReadyAttribute(true);
+    startVideo();
   };
   const syncVideoMount = () => {
     if (!videoState?.layer) return;
@@ -1115,6 +1123,9 @@
     if (window.__dreamSkinAttachVideo === attachVideoEntry) {
       delete window.__dreamSkinAttachVideo;
     }
+    if (window.__dreamSkinSetVideoState === setVideoStateEntry) {
+      delete window.__dreamSkinSetVideoState;
+    }
   };
   const setupVideoListeners = () => {
     if (!videoVisibilityHandler && typeof document.addEventListener === "function") {
@@ -1163,18 +1174,22 @@
     let url;
     let element;
     let layer;
+    let muted;
+    let userPaused;
     try {
       url = URL.createObjectURL(blob);
+      muted = THEME.videoMuted !== false;
+      userPaused = THEME.videoPaused === true;
       element = document.createElement("video");
-      element.muted = true;
-      element.defaultMuted = true;
+      element.muted = muted;
+      element.defaultMuted = muted;
+      element.volume = muted ? 0 : 1;
       element.loop = true;
-      element.autoplay = true;
+      element.autoplay = false;
       element.playsInline = true;
-      element.setAttribute("muted", "");
+      if (muted) element.setAttribute("muted", "");
       element.setAttribute("playsinline", "");
       element.setAttribute("loop", "");
-      element.setAttribute("autoplay", "");
       element.setAttribute("disablepictureinpicture", "");
       element.setAttribute("disableremoteplayback", "");
       element.setAttribute("aria-hidden", "true");
@@ -1187,9 +1202,7 @@
       element.addEventListener("playing", () => {
         if (videoState?.element === element) setVideoReadyAttribute(true);
       });
-      element.addEventListener("pause", () => {
-        if (videoState?.element === element) setVideoReadyAttribute(false);
-      });
+
       element.src = url;
       layer = document.createElement("div");
       layer.setAttribute("data-ds-video-layer", "");
@@ -1200,7 +1213,7 @@
       return { fallback: true, code: "video.decode" };
     }
 
-    videoState = { key: meta.key, layer, element, url, ready: false, mount: null };
+    videoState = { key: meta.key, layer, element, url, ready: false, mount: null, muted, userPaused };
     setupVideoListeners();
     // Attach before waiting for the first frame: some Chromium builds defer
     // media loading for a detached <video>, which would otherwise time out.
@@ -1235,6 +1248,38 @@
     syncVideoMount();
     return { ready: true, key: meta.key };
   };
+  const setVideoStateEntry = (state) => {
+    const current = window[STATE_KEY];
+    if (current?.installToken !== installToken) return { stale: true };
+    if (!videoState) return { video: false };
+    if (typeof state?.muted === "boolean") {
+      videoState.muted = state.muted;
+      const element = videoState.element;
+      element.muted = state.muted;
+      element.defaultMuted = state.muted;
+      element.volume = state.muted ? 0 : 1;
+      if (state.muted) element.setAttribute("muted", "");
+      else element.removeAttribute("muted");
+    }
+    if (typeof state?.paused === "boolean") {
+      videoState.userPaused = state.paused;
+      if (state.paused) {
+        pauseVideo();
+        if (videoState.ready) setVideoReadyAttribute(true);
+      } else {
+        syncVideoPlayback();
+      }
+    } else if (typeof state?.muted === "boolean" && !videoState.userPaused) {
+      syncVideoPlayback();
+    }
+    return {
+      video: true,
+      muted: videoState.muted,
+      paused: videoState.userPaused,
+      ready: videoState.ready,
+    };
+  };
+  window.__dreamSkinSetVideoState = setVideoStateEntry;
   const attachVideoEntry = (base64, meta) => {
     const current = window[STATE_KEY];
     if (current?.installToken !== installToken) return Promise.resolve({ stale: true });
@@ -1454,6 +1499,9 @@
     analysis: artAnalysis,
   };
 })(__DREAM_SKIN_CSS_JSON__, __DREAM_SKIN_ART_JSON__, __DREAM_SKIN_THEME_JSON__, __DREAM_SKIN_VIDEO_META_JSON__)
+
+
+
 
 
 
