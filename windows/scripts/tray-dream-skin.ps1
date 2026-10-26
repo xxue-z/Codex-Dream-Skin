@@ -2,6 +2,29 @@
 param([int]$Port = 9335, [switch]$ShowWindow)
 
 $ErrorActionPreference = 'Stop'
+
+# Windows PowerShell 5.1 stops autoloading Microsoft.PowerShell.Utility when
+# PSModulePath leads with PowerShell 7 roots inherited from a pwsh parent (for
+# example a tray started from a pwsh console). Commands such as Get-FileHash
+# then disappear and every saved-theme apply fails as an internal start error.
+# Keep every existing root, but put the real 5.1 roots first for this process
+# and every child it starts.
+if ("$($PSVersionTable.PSEdition)" -eq 'Desktop') {
+  $dreamSkinModuleRoots = @(
+    (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'WindowsPowerShell\Modules'),
+    (Join-Path $env:ProgramFiles 'WindowsPowerShell\Modules'),
+    (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\Modules')
+  ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
+  $orderedModuleRoots = @()
+  foreach ($root in @($dreamSkinModuleRoots)) {
+    if ($root -and ($orderedModuleRoots -notcontains $root)) { $orderedModuleRoots += $root }
+  }
+  foreach ($root in @("$env:PSModulePath" -split ';')) {
+    if ($root -and ($orderedModuleRoots -notcontains $root)) { $orderedModuleRoots += $root }
+  }
+  $env:PSModulePath = ($orderedModuleRoots -join ';')
+  Remove-Variable dreamSkinModuleRoots, orderedModuleRoots -ErrorAction SilentlyContinue
+}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName Microsoft.VisualBasic
