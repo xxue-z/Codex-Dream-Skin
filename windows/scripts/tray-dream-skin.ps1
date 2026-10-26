@@ -453,10 +453,8 @@ try {
         }.GetNewClosure()
         $null = Add-DreamSkinTrayItem -Items $themeMenu.DropDownItems `
           -Text (Get-DreamSkinTrayText -Key 'Apply') -Action $savedAction
+        [void]$themeMenu.DropDownItems.Add([System.Windows.Forms.ToolStripSeparator]::new())
         $preference = Get-DreamSkinThemeVideoPreference -ThemeId $savedId -StateRoot $StateRoot
-        $dynamicMenu = [System.Windows.Forms.ToolStripMenuItem]::new(
-          (Get-DreamSkinTrayText -Key 'DynamicTheme')
-        )
         $muteText = Get-DreamSkinTrayText -Key 'VideoMute'
         $muteAction = {
           try {
@@ -471,7 +469,7 @@ try {
             Show-DreamSkinTrayError -Message $_.Exception.Message
           }
         }.GetNewClosure()
-        $null = Add-DreamSkinTrayItem -Items $dynamicMenu.DropDownItems `
+        $null = Add-DreamSkinTrayItem -Items $themeMenu.DropDownItems `
           -Text $muteText -Action $muteAction -Checked $preference.Muted
         $pauseText = Get-DreamSkinTrayText -Key 'VideoPause'
         $pauseAction = {
@@ -487,9 +485,8 @@ try {
             Show-DreamSkinTrayError -Message $_.Exception.Message
           }
         }.GetNewClosure()
-        $null = Add-DreamSkinTrayItem -Items $dynamicMenu.DropDownItems `
+        $null = Add-DreamSkinTrayItem -Items $themeMenu.DropDownItems `
           -Text $pauseText -Action $pauseAction -Checked $preference.Paused
-        [void]$themeMenu.DropDownItems.Add($dynamicMenu)
         [void]$savedMenu.DropDownItems.Add($themeMenu)
       }
     }

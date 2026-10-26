@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
 import vm from "node:vm";
+import { createHash } from "node:crypto";
 
 function styleDeclaration() {
   const values = new Map();
@@ -402,13 +403,20 @@ function makeFixture({
   };
   const payloadFor = (theme = {}, cssText = ".fixture { color: red; }", videoMeta = null) => {
     const template = fixture.template;
+    const themeJson = JSON.stringify({ id: "fixture", appearance: "auto", ...theme });
+    // Mirror the production injector: the payload revision is derived from the
+    // rendered content, so a different theme is a different revision and a
+    // re-injection of an identical payload can be recognised as a no-op.
+    const payloadRevision = createHash("sha256")
+      .update("test").update(cssText).update(template).update(themeJson)
+      .digest("hex").slice(0, 20);
     return template
       .replace("__DREAM_SKIN_CSS_JSON__", JSON.stringify(cssText))
       .replace("__DREAM_SKIN_ART_JSON__", JSON.stringify("data:image/png;base64,AA=="))
       .replace("__DREAM_SKIN_THEME_JSON__", JSON.stringify({ id: "fixture", appearance: "auto", ...theme }))
       .replace("__DREAM_SKIN_VERSION_JSON__", JSON.stringify("test"))
       .replace("__DREAM_SKIN_STYLE_REVISION_JSON__", JSON.stringify("css-rev"))
-      .replace("__DREAM_SKIN_PAYLOAD_REVISION_JSON__", JSON.stringify("payload-rev"))
+      .replace("__DREAM_SKIN_PAYLOAD_REVISION_JSON__", () => JSON.stringify(payloadRevision))
       .replace("__DREAM_SKIN_VIDEO_META_JSON__", JSON.stringify(videoMeta));
   };
   const flushTimers = (maximumDelay = Infinity) => {
@@ -1146,6 +1154,38 @@ export async function runRendererRuntimeTest(assetRoot) {
   vm.runInNewContext(adaptiveAccent.payloadFor(), adaptiveAccent.context);
   assert.equal(adaptiveAccent.rootStyle.values.has("--ds-on-accent"), false,
     "Reapplying an adaptive accent must restore the shell-specific CSS foreground default");
+
+  // A tray apply injects the same payload twice (live watcher, then the
+  // restarted daemon). The second install must reuse the live one instead of
+  // tearing the theme down and rebuilding it, which flashed the window twice.
+  const reuseFixture = makeFixture({ nativeAppearance: "dark" });
+  const identicalPayload = reuseFixture.payloadFor({
+    colorMode: "explicit",
+    explicitColorKeys: ["accent"],
+    colors: { accent: "#ffffff" },
+  });
+  const firstInstall = vm.runInNewContext(identicalPayload, reuseFixture.context);
+  const firstState = reuseFixture.window.__CODEX_DREAM_SKIN_STATE__;
+  const firstSheet = firstState.styleSheet;
+  const revokedBefore = reuseFixture.revoked.length;
+  const secondInstall = vm.runInNewContext(identicalPayload, reuseFixture.context);
+  assert.equal(firstInstall.reused, undefined, "The first install must build the payload");
+  assert.equal(secondInstall.reused, true, "Re-injecting an identical payload must reuse the live install");
+  assert.equal(reuseFixture.window.__CODEX_DREAM_SKIN_STATE__, firstState,
+    "Reuse must keep the live state object with its observers, timers and video");
+  assert.equal(reuseFixture.window.__CODEX_DREAM_SKIN_STATE__.styleSheet, firstSheet,
+    "Reuse must keep the installed stylesheet instead of re-adding it");
+  assert.equal(reuseFixture.revoked.length, revokedBefore,
+    "Reuse must not revoke the live artwork object URL");
+  const changedPayload = reuseFixture.payloadFor({
+    colorMode: "explicit",
+    explicitColorKeys: ["accent"],
+    colors: { accent: "#000000" },
+  });
+  const thirdInstall = vm.runInNewContext(changedPayload, reuseFixture.context);
+  assert.equal(thirdInstall.reused, undefined, "A changed payload must rebuild instead of reusing");
+  assert.notEqual(reuseFixture.window.__CODEX_DREAM_SKIN_STATE__, firstState,
+    "A changed payload must install fresh state");
 
   rootObserver.callback([]);
   home.flushTimers(64);
