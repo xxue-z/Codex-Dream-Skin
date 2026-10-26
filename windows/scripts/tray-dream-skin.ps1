@@ -438,7 +438,8 @@ try {
         $isPlaylist = $false
         try {
           $probeTheme = Read-DreamSkinTheme -ThemeDirectory $saved.Path -SkipImageMetadata
-          if ($probeTheme.Theme.PSObject.Properties['videoPlaylist'] -and
+          if ($probeTheme.Theme.id -ceq 'preset-arina-hashimoto' -and
+              $probeTheme.Theme.PSObject.Properties['videoPlaylist'] -and
               $null -ne $probeTheme.Theme.videoPlaylist -and
               $probeTheme.Theme.videoPlaylist.enabled -eq $true) {
             $isPlaylist = $true

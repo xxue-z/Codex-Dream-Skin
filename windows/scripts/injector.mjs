@@ -653,7 +653,8 @@ export async function loadTheme(themeDir, preferenceOptions = {}, options = {}) 
   if (!isContainedRelativePath(realRelativeImage)) {
     throw new Error("Theme image cannot escape through a link or junction");
   }
-  const playlistEnabled = raw.videoPlaylist && typeof raw.videoPlaylist === "object" &&
+  const playlistEnabled = raw.id === "preset-arina-hashimoto" &&
+    raw.videoPlaylist && typeof raw.videoPlaylist === "object" &&
     !Array.isArray(raw.videoPlaylist) && raw.videoPlaylist.enabled === true;
   let chosenImagePath = realImagePath;
   let chosenExtension = extension;

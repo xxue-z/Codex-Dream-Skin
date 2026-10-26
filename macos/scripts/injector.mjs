@@ -881,7 +881,8 @@ export async function loadTheme(themeDir, preferenceOptions = {}, options = {}) 
     safeArea: choice(rawArt.safeArea, "art.safeArea", ["auto", "left", "right", "center", "none"]),
     taskMode: choice(rawArt.taskMode, "art.taskMode", ["auto", "ambient", "banner", "full", "off"]),
   };
-  const playlistEnabled = raw.videoPlaylist && typeof raw.videoPlaylist === "object" &&
+  const playlistEnabled = raw.id === "preset-gothic-void-crusade" &&
+    raw.videoPlaylist && typeof raw.videoPlaylist === "object" &&
     !Array.isArray(raw.videoPlaylist) && raw.videoPlaylist.enabled === true;
   const theme = {
     schemaVersion: raw.schemaVersion,
