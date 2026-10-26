@@ -8,12 +8,15 @@
   "projectLabel": "◉  选择项目",
   "statusText": "DREAM SKIN ONLINE",
   "quote": "MAKE SOMETHING WONDERFUL",
-  "image": "dream-reference.jpg",
+  "image": "poster.jpeg",
   "appearance": "auto",
   "art": {
     "focusX": 0.72,
     "focusY": 0.45,
     "safeArea": "left",
     "taskMode": "ambient"
+  },
+  "videoPlaylist": {
+    "enabled": true
   }
 }

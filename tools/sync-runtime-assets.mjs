@@ -145,6 +145,10 @@ const sourceMp4Metadata = await fs.readFile(
   path.join(projectRoot, "runtime", "mp4-metadata.mjs"),
   "utf8",
 );
+const sourceVideoPlaylist = await fs.readFile(
+  path.join(projectRoot, "runtime", "video-playlist.mjs"),
+  "utf8",
+);
 const outputs = [
   {
     content: await fs.readFile(path.join(projectRoot, "runtime", "theme-preferences.mjs"), "utf8"),
@@ -210,8 +214,20 @@ const outputs = [
     paths: ["macos/assets/mp4-metadata.mjs", "windows/assets/mp4-metadata.mjs"],
   },
   {
+    content: sourceVideoPlaylist,
+    paths: ["macos/assets/video-playlist.mjs", "windows/assets/video-playlist.mjs"],
+  },
+  {
     content: compileWindowsImageMetadata(sourceImageMetadata),
     paths: ["windows/scripts/image-metadata.mjs"],
+  },
+];
+
+// Binary assets are synced byte-for-byte so the two platform trees cannot drift.
+const binaryOutputs = [
+  {
+    content: await fs.readFile(path.join(projectRoot, "runtime", "poster.jpeg")),
+    paths: ["macos/assets/poster.jpeg", "windows/assets/poster.jpeg"],
   },
 ];
 
@@ -227,6 +243,22 @@ for (const output of outputs) {
       }
     } else {
       await fs.writeFile(outputPath, output.content, "utf8");
+      console.log(`updated=${relativePath}`);
+    }
+  }
+}
+
+for (const output of binaryOutputs) {
+  for (const relativePath of output.paths) {
+    const outputPath = path.join(projectRoot, relativePath);
+    if (checkOnly) {
+      const current = await fs.readFile(outputPath).catch(() => null);
+      if (!current || !current.equals(output.content)) {
+        console.error(`out-of-date=${relativePath}`);
+        mismatches += 1;
+      }
+    } else {
+      await fs.writeFile(outputPath, output.content);
       console.log(`updated=${relativePath}`);
     }
   }
