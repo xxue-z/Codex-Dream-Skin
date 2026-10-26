@@ -608,13 +608,6 @@ function Initialize-DreamSkinThemeStore {
     $videosReadmeText = "把 .mp4 或 .webm 视频放进这个文件夹。`r`n默认主题按文件名自然顺序循环播放，默认静音。`r`n支持 MP4 (H.264/HEVC) 与 WebM (VP9/AV1)；播不了的文件会自动跳过。`r`n视频只在本机读取，不会上传。`r`n"
     Write-DreamSkinUtf8FileAtomically -Path $videosReadme -Content $videosReadmeText
   }
-  $defaultPoster = Join-Path $paths.Root 'poster.jpeg'
-  if (-not (Test-Path -LiteralPath $defaultPoster -PathType Leaf)) {
-    $bundledPoster = Join-Path $SkillRoot 'assets\poster.jpeg'
-    if (Test-Path -LiteralPath $bundledPoster -PathType Leaf) {
-      Copy-Item -LiteralPath $bundledPoster -Destination $defaultPoster -Force
-    }
-  }
   Invoke-DreamSkinThemeReplacementRecovery -Paths $paths
   $assetRoot = Join-Path $SkillRoot 'assets'
   $bundledTheme = Read-DreamSkinTheme -ThemeDirectory $assetRoot

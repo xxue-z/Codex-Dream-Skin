@@ -10,14 +10,14 @@ import * as windows from "../windows/scripts/injector.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(here, "..");
-const posterA = path.join(projectRoot, "windows", "assets", "poster.jpeg");
+const posterA = path.join(projectRoot, "windows", "assets", "dream-reference.jpg");
 const posterB = path.join(projectRoot, "docs", "images", "presets", "arina-hashimoto-light.jpg");
 
 async function makeTheme({ playlist = true, id = "preset-arina-hashimoto" } = {}) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "dreamskin-default-theme-"));
-  await fs.copyFile(posterA, path.join(dir, "poster.jpeg"));
+  await fs.copyFile(posterA, path.join(dir, "dream-reference.jpg"));
   await fs.writeFile(path.join(dir, "theme.css"), '[data-ds-part="composer"] { border-radius: 24px; }\n');
-  const theme = { schemaVersion: 1, id, name: "Test", image: "poster.jpeg" };
+  const theme = { schemaVersion: 1, id, name: "Test", image: "dream-reference.jpg" };
   if (playlist) theme.videoPlaylist = { enabled: true };
   await fs.writeFile(path.join(dir, "theme.json"), JSON.stringify(theme, null, 2) + "\n");
   const videos = path.join(dir, "videos");

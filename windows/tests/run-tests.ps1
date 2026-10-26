@@ -1083,7 +1083,7 @@ try {
     $initialTheme.Theme.appearance -cne 'auto' -or
     $initialTheme.Theme.art.safeArea -cne 'left' -or
     $initialTheme.Theme.art.taskMode -cne 'ambient' -or
-    [System.IO.Path]::GetFileName($initialTheme.ImagePath) -cne 'poster.jpeg') {
+    [System.IO.Path]::GetFileName($initialTheme.ImagePath) -cne 'dream-reference.jpg') {
     throw 'Default Windows theme did not seed the Arina Hashimoto wallpaper contract.'
   }
   $preseededThemes = @(Get-DreamSkinSavedThemes -StateRoot $themeStateRoot)
@@ -1165,7 +1165,7 @@ try {
   foreach ($releaseAsset in @(
     'dream-skin.css', 'renderer-inject.js', 'safe-css-policy.json', 'safe-css-validator.mjs', 'selectors.json',
     'theme-package-validator.mjs', 'mp4-metadata.mjs', 'theme-preferences.mjs',
-    'video-playlist.mjs', 'poster.jpeg'
+    'video-playlist.mjs'
   )) {
     Copy-Item -LiteralPath (Join-Path $Root "assets\$releaseAsset") `
       -Destination $releaseFixtureAssets -Force
