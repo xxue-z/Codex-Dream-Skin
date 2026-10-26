@@ -6,6 +6,7 @@
 - Windows：桌面／开始菜单 → **Codex Dream Skin**，或双击托盘图标。原生窗口提供当前主题透明度和已保存主题删除；切换、导入主题仍使用现有托盘。
 
 透明度范围为 0–100%；0% 不透明，100% 全透明。只改变主题背景，文字和图标不随之变淡。优先级为用户按主题保存的设置 → 作者明确的 alpha → 默认 30%。点“跟随主题”清除当前主题的用户覆盖。主题包不会被改写。
+动态主题在 Windows 托盘的“已保存主题”下展开为“动态主题”，提供勾选式“静音”和“暂停”：勾选表示已静音或已暂停。MP4 默认静音；暂停会冻结当前帧，取消静音和恢复播放需要由托盘动作显式触发。视频偏好保存在独立的 `theme-video-preferences.json`，不会改写主题包或透明度偏好。
 
 删除需确认主题名称，之后将该主题的本机保存目录移到系统废纸篓／回收站。正在使用的主题需先切换；导入或切换进行中时暂不删除。原始 ZIP、当前主题快照、恢复备份和社区发布记录保留。透明度偏好也保留，以便重新导入或恢复主题时继续使用。
 
@@ -20,6 +21,8 @@ Transparency ranges from 0% (opaque) to 100% (transparent). Per-theme local
 settings take priority over authored alpha; otherwise the default is 30%.
 **Follow theme** clears the current theme's override. Text, icons and source
 packages remain unchanged.
+
+Dynamic themes expose a **Dynamic theme** submenu under **Saved themes** in the Windows tray with checkable **Mute** and **Pause** items (checked means muted or paused). MP4s start muted; pausing freezes the current frame, while unmuting and resuming playback require an explicit tray action. Video preferences live in `theme-video-preferences.json` and never rewrite the theme package or transparency preferences.
 
 Deleting requires confirmation and moves only the selected saved theme directory
 to Trash or Recycle Bin. Switch away from the current theme before deleting it.

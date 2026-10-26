@@ -176,8 +176,8 @@ function parseTrack(bytes, trak, counts) {
   const minfBox = mdiaChildren.find((child) => child.type === "minf");
   if (!hdlrBox || !minfBox) fail("video.parse", "mdia is missing hdlr or minf");
   const handler = parseHdlr(bytes, hdlrBox);
-  if (handler === "soun") fail("video.audio_track", "audio tracks are not supported");
-  if (handler !== "vide") fail("video.extra_track", "only one video track is supported");
+  if (handler === "soun") return { kind: "audio" };
+  if (handler !== "vide") fail("video.extra_track", "only video and audio tracks are supported");
 
   const minfChildren = children(bytes, minfBox, 4, counts);
   const stblBox = minfChildren.find((child) => child.type === "stbl");
@@ -196,6 +196,7 @@ function parseTrack(bytes, trak, counts) {
     fail("video.dimensions", "tkhd and sample dimensions disagree");
   }
   return {
+    kind: "video",
     width: tkhdWidth,
     height: tkhdHeight,
     profile: sample.profile,
@@ -252,8 +253,11 @@ export function readMp4Metadata(bytes) {
   const tracks = moovChildren.filter((box) => box.type === "trak");
   if (tracks.length === 0) fail("video.track_count", "MP4 must contain one video track");
   const parsedTracks = tracks.map((trak) => parseTrack(bytes, trak, counts));
-  if (parsedTracks.length !== 1) fail("video.track_count", "MP4 must contain exactly one video track");
-  const track = parsedTracks[0];
+  const videoTracks = parsedTracks.filter((track) => track.kind === "video");
+  const audioTracks = parsedTracks.filter((track) => track.kind === "audio");
+  if (videoTracks.length !== 1) fail("video.track_count", "MP4 must contain exactly one video track");
+  if (audioTracks.length > 1) fail("video.audio_track", "MP4 may contain at most one audio track");
+  const track = videoTracks[0];
 
   if (track.width < 640 || track.width > MAX_VIDEO_WIDTH ||
       track.height < 360 || track.height > MAX_VIDEO_HEIGHT ||
@@ -272,7 +276,10 @@ export function readMp4Metadata(bytes) {
     codec: "avc1",
     profile: track.profile,
     tracks: 1,
+    audioTracks: audioTracks.length,
+    audio: audioTracks.length === 1,
     brand,
   };
 }
+
 

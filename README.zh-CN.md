@@ -169,7 +169,7 @@ macOS 菜单栏和 Windows 托盘都有「主题库 Gallery」和「在线 Studi
 
 在 macOS 菜单栏选择“导入主题 ZIP…”，或在 Windows 托盘选择同名菜单。只支持普通 `.zip`，不支持 `.dreamskin` 后缀，也不要仅改后缀伪装。
 
-正式 Studio 主题包包含 `manifest.json`、`theme.json`、非空 `theme.css` 和恰好一张 `background.webp|jpg|png`；还可包含 `LICENSE.txt` 和预留的 `manifest.sig`。这些文件可以位于 ZIP 根目录或唯一一层主题目录。导入器会核对适用平台、最低客户端版本，以及清单中每个负载文件的大小和 SHA-256。`theme.css` 必须通过本机 Safe CSS 校验，导入后只会作用于 12 个注册部件；每次切换 / 应用仍会重新校验。`manifest.sig` 当前不参与签名验证。Skin API 2 主题还可以携带一个可选的 `background.mp4` 动态背景（H.264、无音轨、2-20 秒、不超过 1920x1080、最大 16 MiB）；它必须有同主题的海报图和 `theme.css`，并要求客户端 1.6.0 或更高版本。旧客户端会明确拒绝 API 2 包。
+正式 Studio 主题包包含 `manifest.json`、`theme.json`、非空 `theme.css` 和恰好一张 `background.webp|jpg|png`；还可包含 `LICENSE.txt` 和预留的 `manifest.sig`。这些文件可以位于 ZIP 根目录或唯一一层主题目录。导入器会核对适用平台、最低客户端版本，以及清单中每个负载文件的大小和 SHA-256。`theme.css` 必须通过本机 Safe CSS 校验，导入后只会作用于 12 个注册部件；每次切换 / 应用仍会重新校验。`manifest.sig` 当前不参与签名验证。Skin API 2 主题还可以携带一个可选的 `background.mp4` 动态背景（H.264、最多 1 条音轨且默认静音、2-20 秒、不超过 1920x1080、最大 16 MiB）。动态主题在 Windows 托盘“已保存主题”下以勾选方式提供“静音”与“暂停”（勾选表示已静音或已暂停）；它必须有同主题的海报图和 `theme.css`，并要求客户端 1.6.0 或更高版本。旧客户端会明确拒绝 API 2 包。
 
 本地简化 ZIP 也必须恰好包含非空 `theme.json`、非空 `theme.css` 和其引用图片；该格式没有正式清单的完整性与兼容性声明，只应从可信来源使用。压缩包最大 32 MiB、最多 32 个条目、解压后最多 64 MiB。
 
@@ -220,3 +220,5 @@ macOS 菜单栏和 Windows 托盘都有「主题库 Gallery」和「在线 Studi
 ---
 
 Star 一下，然后挑一张图，把你的 Codex 变成今天想要的样子。
+
+

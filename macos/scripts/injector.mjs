@@ -302,6 +302,8 @@ function parseArgs(argv) {
     operationUiState: null,
     operationMessage: null,
     operationToken: null,
+    videoPaused: null,
+    videoMuted: null,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -313,6 +315,9 @@ function parseArgs(argv) {
     else if (arg === "--begin-operation") options.mode = "begin-operation";
     else if (arg === "--finish-operation") options.mode = "finish-operation";
     else if (arg === "--check-payload") options.mode = "check";
+    else if (arg === "--video-state") options.mode = "video-state";
+    else if (arg === "--paused") options.videoPaused = argv[++i];
+    else if (arg === "--muted") options.videoMuted = argv[++i];
     else if (arg === "--timeout-ms") options.timeoutMs = Number(argv[++i]);
     else if (arg === "--screenshot") options.screenshot = path.resolve(argv[++i]);
     else if (arg === "--theme-dir") options.themeDir = path.resolve(argv[++i]);
@@ -346,6 +351,19 @@ function parseArgs(argv) {
       || /[\r\n]/.test(options.operationMessage)) {
       throw new Error("Finish operation requires a single-line --operation-message up to 240 characters");
     }
+  }
+  if (options.mode === "video-state") {
+    for (const key of ["videoPaused", "videoMuted"]) {
+      const value = options[key];
+      if (value !== null && value !== "true" && value !== "false") {
+        throw new Error(`--${key === "videoPaused" ? "paused" : "muted"} must be true or false`);
+      }
+    }
+    if (options.videoPaused === null && options.videoMuted === null) {
+      throw new Error("video-state mode requires --paused and/or --muted");
+    }
+    options.videoPaused = options.videoPaused === null ? null : options.videoPaused === "true";
+    options.videoMuted = options.videoMuted === null ? null : options.videoMuted === "true";
   }
   return options;
 }
@@ -508,6 +526,23 @@ class CdpSession {
     }
   }
 
+  async setVideoState(state) {
+    const expression = `(() => {
+      if (typeof window.__dreamSkinSetVideoState !== "function") return { video: false };
+      return window.__dreamSkinSetVideoState(${JSON.stringify(state)});
+    })()`;
+    const result = await this.send("Runtime.evaluate", {
+      expression,
+      awaitPromise: true,
+      returnByValue: true,
+      userGesture: true,
+    });
+    if (result.exceptionDetails) {
+      const detail = result.exceptionDetails.exception?.description ?? result.exceptionDetails.text;
+      throw new Error(`Renderer video state failed: ${detail}`);
+    }
+    return result.result?.value;
+  }
   close() {
     for (const waiter of this.pending.values()) {
       clearTimeout(waiter.timeout);
@@ -776,6 +811,7 @@ export async function loadTheme(themeDir, preferenceOptions = {}) {
   const userTransparency = await readThemeTransparency(theme.id, { preferencesPath: themePreferencesPath("darwin"), ...preferenceOptions });
   if (userTransparency !== undefined) theme.userTransparency = userTransparency;
   const videoPreference = await readThemeVideoPreference(theme.id, { preferencesPath: themePreferencesPath("darwin"), ...preferenceOptions });
+  theme.videoMuted = videoPreference.muted;
   if (!videoPreference.enabled) theme.videoEnabled = false;
   if (videoPreference.paused) theme.videoPaused = true;
   if (appearance !== undefined) theme.appearance = appearance;
@@ -999,6 +1035,27 @@ async function applyThemeToSession(session, loaded) {
   return result;
 }
 
+async function runVideoState(options) {
+  const state = { paused: options.videoPaused, muted: options.videoMuted };
+  const connected = await connectCodexTargets(
+    options.port,
+    Math.min(options.timeoutMs, 8000),
+  );
+  const results = [];
+  for (const { target, session } of connected) {
+    try {
+      const result = await session.setVideoState(state);
+      results.push({ targetId: target.id, state: result });
+    } catch (error) {
+      results.push({ targetId: target.id, error: error.message });
+    } finally {
+      session.close();
+    }
+  }
+  const applied = results.some((result) => result.state?.video === true);
+  console.log(JSON.stringify({ pass: applied, state, targets: results }, null, 2));
+  if (!applied) process.exitCode = 1;
+}
 function nextOperationToken() {
   operationSequence += 1;
   return `${process.pid}:${Date.now()}:${operationSequence}`;
@@ -2161,6 +2218,8 @@ async function runWatch(options) {
             earlyScriptIds: new Set(),
             needsLoadFallback: false,
             operationToken: null,
+    videoPaused: null,
+    videoMuted: null,
             operationExternal: false,
           };
           connectionEpoch = mutationEpoch;
@@ -2336,7 +2395,9 @@ async function runOneShotAndExit(options) {
 if (path.resolve(process.argv[1] || "") === path.resolve(scriptPath)) {
   try {
     const options = parseArgs(process.argv.slice(2));
-    if (options.mode === "check") {
+    if (options.mode === "video-state") {
+      await runVideoState(options);
+    } else if (options.mode === "check") {
       const loaded = await loadPayload(options.themeDir);
       // loadPayload already fails closed, but every installer, importer and
       // theme switch gates on this command, so the guard is re-asserted at the
@@ -2371,3 +2432,5 @@ if (path.resolve(process.argv[1] || "") === path.resolve(scriptPath)) {
     process.exitCode = 1;
   }
 }
+
+

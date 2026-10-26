@@ -119,6 +119,7 @@ test("accepts a minimal H.264 MP4", () => {
   assert.equal(metadata.codec, "avc1");
   assert.equal(metadata.profile, 100);
   assert.equal(metadata.brand, "isom");
+  assert.equal(metadata.audio, false);
 });
 
 test("rejects QuickTime, non-MP4 and fragmented containers", () => {
@@ -129,10 +130,12 @@ test("rejects QuickTime, non-MP4 and fragmented containers", () => {
   assert.equal(mdatFirst.width, 1920);
 });
 
-test("rejects audio, extra video and additional non-video tracks", () => {
-  expectCode(makeMp4({ tracks: [{ handler: "soun" }] }), "video.audio_track");
+test("accepts one audio track and rejects multiple audio or extra tracks", () => {
+  const withAudio = readMp4Metadata(makeMp4({ tracks: [{}, { handler: "soun" }] }));
+  assert.equal(withAudio.audio, true);
+  assert.equal(withAudio.audioTracks, 1);
+  expectCode(makeMp4({ tracks: [{}, { handler: "soun" }, { handler: "soun" }] }), "video.audio_track");
   expectCode(makeMp4({ tracks: [{}, {}] }), "video.track_count");
-  expectCode(makeMp4({ tracks: [{}, { handler: "soun" }] }), "video.audio_track");
   expectCode(makeMp4({ tracks: [{ handler: "subtit" }] }), "video.extra_track");
 });
 
@@ -162,4 +165,6 @@ test("rejects truncated and malformed boxes", () => {
   overflow.writeUInt32BE(0xffffffff, 0);
   expectCode(overflow, "video.parse");
 });
+
+
 

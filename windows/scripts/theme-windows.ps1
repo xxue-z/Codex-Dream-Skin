@@ -2251,6 +2251,94 @@ function Get-DreamSkinSavedThemes {
   }
 }
 
+function Get-DreamSkinThemeVideoPreference {
+  param(
+    [Parameter(Mandatory = $true)][string]$ThemeId,
+    [string]$StateRoot = (Join-Path $env:LOCALAPPDATA 'CodexDreamSkin')
+  )
+  $path = Join-Path $StateRoot 'theme-video-preferences.json'
+  $paused = $false
+  $muted = $true
+  if (Test-Path -LiteralPath $path -PathType Leaf) {
+    try {
+      Assert-DreamSkinNoReparseComponents -Path $path
+      $item = Get-Item -LiteralPath $path -Force -ErrorAction Stop
+      if ($item.Length -gt 256KB) { throw 'Local video preferences exceed the 256 KB limit.' }
+      $data = (Read-DreamSkinUtf8File -Path $path) | ConvertFrom-Json -ErrorAction Stop
+      if ($data.schemaVersion -eq 1 -and $null -ne $data.themes) {
+        $entry = $data.themes.PSObject.Properties[$ThemeId]
+        if ($null -ne $entry -and $null -ne $entry.Value) {
+          if ($entry.Value.paused -eq $true) { $paused = $true }
+          if ($entry.Value.muted -is [bool]) { $muted = [bool]$entry.Value.muted }
+        }
+      }
+    } catch {}
+  }
+  return [pscustomobject]@{ Paused = $paused; Muted = $muted }
+}
+
+function Set-DreamSkinThemeVideoPreference {
+  param(
+    [Parameter(Mandatory = $true)][string]$ThemeId,
+    [AllowNull()][object]$Paused = $null,
+    [AllowNull()][object]$Muted = $null,
+    [string]$StateRoot = (Join-Path $env:LOCALAPPDATA 'CodexDreamSkin')
+  )
+  if ($null -ne $Paused -and $Paused -isnot [bool]) {
+    throw 'Video paused preference must be boolean.'
+  }
+  if ($null -ne $Muted -and $Muted -isnot [bool]) {
+    throw 'Video muted preference must be boolean.'
+  }
+  $root = [System.IO.Path]::GetFullPath($StateRoot)
+  [void][System.IO.Directory]::CreateDirectory($root)
+  $path = Join-Path $root 'theme-video-preferences.json'
+  $data = $null
+  if (Test-Path -LiteralPath $path -PathType Leaf) {
+    Assert-DreamSkinNoReparseComponents -Path $path
+    $item = Get-Item -LiteralPath $path -Force -ErrorAction Stop
+    if ($item.Length -gt 256KB) { throw 'Local video preferences exceed the 256 KB limit.' }
+    try {
+      $data = (Read-DreamSkinUtf8File -Path $path) | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+      throw 'Local video preferences are invalid; refusing to overwrite them.'
+    }
+    if ($data.schemaVersion -ne 1) {
+      throw 'Local video preferences use an unsupported schema; refusing to overwrite them.'
+    }
+    if ($null -eq $data.themes) {
+      $data | Add-Member -NotePropertyName themes -NotePropertyValue ([pscustomobject]@{}) -Force
+    } elseif ($data.themes -is [array]) {
+      throw 'Local video preferences use an unsupported themes shape; refusing to overwrite them.'
+    }
+  } else {
+    $data = [pscustomobject]@{
+      schemaVersion = 1
+      videoBackground = $true
+      themes = [pscustomobject]@{}
+    }
+  }
+  $property = $data.themes.PSObject.Properties[$ThemeId]
+  if ($null -eq $property) {
+    $entry = [pscustomobject]@{}
+    $data.themes | Add-Member -NotePropertyName $ThemeId -NotePropertyValue $entry -Force
+  } else {
+    $entry = $property.Value
+  }
+  if ($null -ne $Paused) {
+    $entry | Add-Member -NotePropertyName paused -NotePropertyValue ([bool]$Paused) -Force
+  }
+  if ($null -ne $Muted) {
+    $entry | Add-Member -NotePropertyName muted -NotePropertyValue ([bool]$Muted) -Force
+  }
+  $content = ($data | ConvertTo-Json -Depth 8) + "`r`n"
+  if ($content.Length -gt 256KB) {
+    throw 'Updated video preferences exceed the 256 KB limit.'
+  }
+  Write-DreamSkinUtf8FileAtomically -Path $path -Content $content
+  return Get-DreamSkinThemeVideoPreference -ThemeId $ThemeId -StateRoot $root
+}
+
 function Use-DreamSkinSavedTheme {
   param(
     [Parameter(Mandatory = $true)][string]$ThemeDirectory,
