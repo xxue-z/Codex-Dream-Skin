@@ -160,6 +160,20 @@ This portrait material remains in the source repository for reference and rights
 
 > The downloadable user source is [`docs/images/presets/arina-hashimoto-source.png`](./docs/images/presets/arina-hashimoto-source.png) (`1672 × 941`); the source-only reference preset uses the normalized derived [`background.jpg`](./macos/presets/preset-arina-hashimoto/background.jpg) (`2560 × 1440`). **Do not import either screenshot above** — they contain real UI and are previews only. The background is a user-provided AI-generated example, not an official OpenAI/Codex visual or endorsement; do not put it in a public installer without confirmed likeness and asset rights.
 
+## Default theme video playlist
+
+The bundled default theme can play a local folder of videos as its background. Put `.mp4` or `.webm` files directly into:
+
+- Windows: `%LOCALAPPDATA%\CodexDreamSkin\videos\`
+- macOS: `~/Library/Application Support/CodexDreamSkinStudio/videos/`
+
+Files play in natural filename order (`1`, `2`, `10`), loop with hard cuts, start muted, and resume from the last position after a restart. Unsupported or unreadable files are skipped. Videos are read locally with disk-backed `blob:` URLs: nothing is uploaded, no listening port is opened, and `app.asar` is never modified.
+
+The default theme's tray/menu submenu (same level as Apply / Mute / Pause) also provides Change poster, Restore default poster, Open videos folder and Rescan videos. A poster replacement at `%LOCALAPPDATA%\CodexDreamSkin\poster.jpeg` (Windows) or `~/Library/Application Support/CodexDreamSkinStudio/poster.jpeg` (macOS) takes effect within 1–2 seconds; an invalid file keeps the last good poster.
+
+This local playlist is separate from the official Skin API 2 ZIP contract: official packs still allow exactly one `background.mp4`, and `videos/` remains rejected by the ZIP validator.
+
+
 ## Import a theme ZIP
 
 For themes from DreamSkin.cc, prefer [one-click apply](#theme-library--community). The manual path below is the fallback, and covers packs from any other source.

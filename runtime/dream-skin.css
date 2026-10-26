@@ -333,6 +333,27 @@ html[data-dream-skin="active"] [data-ds-video-layer] > video {
   opacity: var(--ds-art-layer-opacity, .78);
 }
 
+/* Local playlist viewing mode: the user explicitly chose to watch these
+   videos, so keep the footage at full strength and soften the readability
+   scrim. Text surfaces keep their own panel alpha. */
+html[data-dream-skin="active"][data-dream-playlist="active"] {
+  --ds-art-layer-opacity: 1;
+}
+
+html[data-dream-skin="active"][data-dream-playlist="active"][data-dream-playlist-veil="soft"] {
+  --ds-upload-bg-alpha: .18 !important;
+  --ds-upload-panel-alpha: .55 !important;
+}
+
+html[data-dream-skin="active"][data-dream-playlist="active"][data-dream-playlist-veil="strong"] {
+  --ds-upload-bg-alpha: .45 !important;
+  --ds-upload-panel-alpha: .72 !important;
+}
+
+html[data-dream-skin="active"][data-dream-playlist="active"] [data-ds-video-layer] > video {
+  opacity: 1 !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
   html[data-dream-skin="active"] [data-ds-video-layer] {
     display: none !important;

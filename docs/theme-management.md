@@ -10,6 +10,18 @@
 
 删除需确认主题名称，之后将该主题的本机保存目录移到系统废纸篓／回收站。正在使用的主题需先切换；导入或切换进行中时暂不删除。原始 ZIP、当前主题快照、恢复备份和社区发布记录保留。透明度偏好也保留，以便重新导入或恢复主题时继续使用。
 
+## 默认主题：本地视频与海报
+
+内置默认主题（`videoPlaylist.enabled = true`）在本机固定目录读取视频：
+
+- Windows：`%LOCALAPPDATA%\CodexDreamSkin\videos\`
+- macOS：`~/Library/Application Support/CodexDreamSkinStudio/videos/`
+
+按文件名自然顺序循环、硬切、默认静音，并记住当前段与播放位置。视频通过 CDP 隐藏文件输入得到磁盘背书的 `File`，再转成 `blob:` URL；不读取进内存、不上传、不新增监听端口。
+
+默认主题在“已保存主题”里展开为子菜单，同级提供：应用、静音、暂停、降低遮罩、更换海报…、恢复默认海报、打开视频文件夹、重新扫描视频。海报覆盖路径为 `...\poster.jpeg`，替换后 1–2 秒内热重载；无效文件保留上一张，删除后回退内置海报。
+
+
 ## English
 
 On macOS, open the menu bar **Theme** menu for background transparency and
@@ -29,6 +41,18 @@ to Trash or Recycle Bin. Switch away from the current theme before deleting it.
 Source ZIPs, active snapshots, recovery backups, community publications and
 per-theme preferences are retained. Restore the directory from Trash or Recycle
 Bin to undo deletion.
+
+## Default theme: local playlist and poster
+
+The bundled default theme (`videoPlaylist.enabled = true`) reads videos from a fixed local folder:
+
+- Windows: `%LOCALAPPDATA%\CodexDreamSkin\videos\`
+- macOS: `~/Library/Application Support/CodexDreamSkinStudio/videos/`
+
+Files play in natural filename order, loop with hard cuts, start muted, and resume from the last position. The renderer receives disk-backed `File` objects through a hidden CDP file input and turns them into `blob:` URLs; nothing is read into memory, uploaded, or exposed on a listening port.
+
+The default theme expands to a submenu under Saved themes with Apply, Mute, Pause, Reduce scrim, Change poster…, Restore default poster, Open videos folder and Rescan videos at the same level. Replace `.../poster.jpeg` to hot-reload the poster within 1–2 seconds; invalid files keep the last good poster and deleting the override restores the bundled one.
+
 
 ## Candidate acceptance / 候选版本验收
 

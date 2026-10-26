@@ -1083,7 +1083,7 @@ try {
     $initialTheme.Theme.appearance -cne 'auto' -or
     $initialTheme.Theme.art.safeArea -cne 'left' -or
     $initialTheme.Theme.art.taskMode -cne 'ambient' -or
-    [System.IO.Path]::GetExtension($initialTheme.ImagePath) -cne '.jpg') {
+    [System.IO.Path]::GetFileName($initialTheme.ImagePath) -cne 'poster.jpeg') {
     throw 'Default Windows theme did not seed the Arina Hashimoto wallpaper contract.'
   }
   $preseededThemes = @(Get-DreamSkinSavedThemes -StateRoot $themeStateRoot)
@@ -1164,10 +1164,14 @@ try {
   Copy-Item -LiteralPath (Join-Path $Root 'VERSION') -Destination $releaseFixtureRoot -Force
   foreach ($releaseAsset in @(
     'dream-skin.css', 'renderer-inject.js', 'safe-css-policy.json', 'safe-css-validator.mjs', 'selectors.json',
-    'theme-package-validator.mjs'
+    'theme-package-validator.mjs', 'mp4-metadata.mjs', 'theme-preferences.mjs',
+    'video-playlist.mjs', 'poster.jpeg'
   )) {
     Copy-Item -LiteralPath (Join-Path $Root "assets\$releaseAsset") `
       -Destination $releaseFixtureAssets -Force
+  }
+  foreach ($dsScript in @('ds-cm-msg.ps1', 'ds-cm-req.ps1', 'ds-cm-data.ps1', 'ds-cm-snap.ps1')) {
+    Copy-Item -LiteralPath (Join-Path $Root "scripts\$dsScript") -Destination $releaseFixtureScripts -Force
   }
   Copy-Item -LiteralPath (Join-Path $Root 'scripts\common-windows.ps1') -Destination $releaseFixtureScripts -Force
   Copy-Item -LiteralPath (Join-Path $Root 'scripts\apply-community-theme.ps1') -Destination $releaseFixtureScripts -Force
