@@ -356,6 +356,114 @@ function Get-DreamSkinThemePaths {
   }
 }
 
+function Get-DreamSkinPlaylistStatePath {
+  param([string]$StateRoot = (Join-Path $env:LOCALAPPDATA 'CodexDreamSkin'))
+  return (Join-Path ([System.IO.Path]::GetFullPath($StateRoot)) 'video-playlist.json')
+}
+
+function Get-DreamSkinPlaylistPreference {
+  param([string]$StateRoot = (Join-Path $env:LOCALAPPDATA 'CodexDreamSkin'))
+  $path = Get-DreamSkinPlaylistStatePath -StateRoot $StateRoot
+  $muted = $true
+  $paused = $false
+  $softVeil = $true
+  try {
+    if (Test-Path -LiteralPath $path -PathType Leaf) {
+      $raw = (Read-DreamSkinUtf8File -Path $path) | ConvertFrom-Json -ErrorAction Stop
+      if ($null -ne $raw.muted) { $muted = [bool]$raw.muted }
+      if ($null -ne $raw.paused) { $paused = [bool]$raw.paused }
+      if ($null -ne $raw.softVeil) { $softVeil = [bool]$raw.softVeil }
+    }
+  } catch {}
+  return [pscustomobject]@{ Muted = $muted; Paused = $paused; SoftVeil = $softVeil }
+}
+
+function Set-DreamSkinPlaylistPreference {
+  param(
+    [string]$StateRoot = (Join-Path $env:LOCALAPPDATA 'CodexDreamSkin'),
+    [Nullable[bool]]$Muted = $null,
+    [Nullable[bool]]$Paused = $null,
+    [Nullable[bool]]$SoftVeil = $null
+  )
+  $root = [System.IO.Path]::GetFullPath($StateRoot)
+  New-Item -ItemType Directory -Force -Path $root | Out-Null
+  $path = Get-DreamSkinPlaylistStatePath -StateRoot $root
+  $current = Get-DreamSkinPlaylistPreference -StateRoot $root
+  $muted = $current.Muted
+  $paused = $current.Paused
+  $softVeil = $current.SoftVeil
+  if ($null -ne $Muted) { $muted = [bool]$Muted }
+  if ($null -ne $Paused) { $paused = [bool]$Paused }
+  if ($null -ne $SoftVeil) { $softVeil = [bool]$SoftVeil }
+  $index = 0
+  $positionSeconds = 0.0
+  try {
+    if (Test-Path -LiteralPath $path -PathType Leaf) {
+      $raw = (Read-DreamSkinUtf8File -Path $path) | ConvertFrom-Json -ErrorAction Stop
+      if ($null -ne $raw.index) { $index = [int]$raw.index }
+      if ($null -ne $raw.positionSeconds) { $positionSeconds = [double]$raw.positionSeconds }
+    }
+  } catch {}
+  $payload = [ordered]@{
+    schemaVersion = 1
+    index = $index
+    positionSeconds = $positionSeconds
+    muted = $muted
+    paused = $paused
+    softVeil = $softVeil
+    updatedAt = (Get-Date).ToUniversalTime().ToString('o')
+  }
+  $json = ($payload | ConvertTo-Json -Depth 4) + "`r`n"
+  Write-DreamSkinUtf8FileAtomically -Path $path -Content $json
+}
+
+function Set-DreamSkinPlaylistPoster {
+  param(
+    [Parameter(Mandatory = $true)][string]$SourcePath,
+    [string]$StateRoot = (Join-Path $env:LOCALAPPDATA 'CodexDreamSkin')
+  )
+  $source = [System.IO.Path]::GetFullPath($SourcePath)
+  Assert-DreamSkinImageFile -Path $source
+  $size = (Get-Item -LiteralPath $source -Force).Length
+  if ($size -lt 1 -or $size -gt 10MB) {
+    throw 'Poster image must be between 1 byte and 10 MB.'
+  }
+  $extension = [System.IO.Path]::GetExtension($source).ToLowerInvariant()
+  if ($extension -notin @('.jpg', '.jpeg')) {
+    throw 'Choose a JPEG poster (.jpg or .jpeg).'
+  }
+  $root = [System.IO.Path]::GetFullPath($StateRoot)
+  New-Item -ItemType Directory -Force -Path $root | Out-Null
+  $temporary = Join-Path $root ('.poster-' + [guid]::NewGuid().ToString('N') + '.jpeg')
+  try {
+    Copy-Item -LiteralPath $source -Destination $temporary -Force
+    Move-Item -LiteralPath $temporary -Destination (Join-Path $root 'poster.jpeg') -Force
+  } finally {
+    Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+  }
+}
+
+function Restore-DreamSkinPlaylistPoster {
+  param([string]$StateRoot = (Join-Path $env:LOCALAPPDATA 'CodexDreamSkin'))
+  Remove-Item -LiteralPath (Join-Path $StateRoot 'poster.jpeg') -Force -ErrorAction SilentlyContinue
+}
+
+function Request-DreamSkinPlaylistRescan {
+  param([string]$StateRoot = (Join-Path $env:LOCALAPPDATA 'CodexDreamSkin'))
+  $root = [System.IO.Path]::GetFullPath($StateRoot)
+  New-Item -ItemType Directory -Force -Path $root | Out-Null
+  $requestPath = Join-Path $root 'playlist-rescan.request'
+  Write-DreamSkinUtf8FileAtomically -Path $requestPath `
+    -Content ([string][DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
+}
+
+function Open-DreamSkinVideosFolder {
+  param([string]$StateRoot = (Join-Path $env:LOCALAPPDATA 'CodexDreamSkin'))
+  $videos = Join-Path ([System.IO.Path]::GetFullPath($StateRoot)) 'videos'
+  New-Item -ItemType Directory -Force -Path $videos | Out-Null
+  Start-Process -FilePath explorer.exe -ArgumentList (@('"' + $videos + '"')) | Out-Null
+}
+
 function Test-DreamSkinThemePathWithin {
   param([string]$Path, [string]$Root)
   if (-not $Path -or -not $Root) { return $false }
@@ -492,6 +600,13 @@ function Initialize-DreamSkinThemeStore {
   $paths = Get-DreamSkinThemePaths -StateRoot $StateRoot
   foreach ($directory in @($paths.Root, $paths.Active, $paths.Saved, $paths.Images)) {
     Ensure-DreamSkinManagedDirectory -Path $directory -Root $paths.Root
+  }
+  $videosDirectory = Join-Path $paths.Root 'videos'
+  Ensure-DreamSkinManagedDirectory -Path $videosDirectory -Root $paths.Root
+  $videosReadme = Join-Path $videosDirectory 'README.txt'
+  if (-not (Test-Path -LiteralPath $videosReadme -PathType Leaf)) {
+    $videosReadmeText = "把 .mp4 或 .webm 视频放进这个文件夹。`r`n默认主题按文件名自然顺序循环播放，默认静音。`r`n支持 MP4 (H.264/HEVC) 与 WebM (VP9/AV1)；播不了的文件会自动跳过。`r`n视频只在本机读取，不会上传。`r`n"
+    Write-DreamSkinUtf8FileAtomically -Path $videosReadme -Content $videosReadmeText
   }
   Invoke-DreamSkinThemeReplacementRecovery -Paths $paths
   $assetRoot = Join-Path $SkillRoot 'assets'
