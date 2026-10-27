@@ -1454,12 +1454,37 @@ function Stop-DreamSkinRecordedInjector {
     $injectorMatches = $injectorMatches -and [regex]::IsMatch($commandLine, $browserPattern)
   }
   try {
-    $startedAt = $processHandle.StartTime.ToUniversalTime().ToString('o')
+    $processStartedAt = $processHandle.StartTime.ToUniversalTime()
   } catch {
     if ($processHandle.HasExited) { return $true }
     throw "The recorded injector PID $processId is running, but its start time cannot be inspected. State was preserved."
   }
-  $startMatches = -not $State.injectorStartedAt -or $startedAt -eq "$($State.injectorStartedAt)"
+  # Windows PowerShell 5.1 ConvertFrom-Json turns the ISO timestamp into a
+  # [datetime], while PowerShell 7 leaves it as a string. Normalize both and
+  # allow a two-second tolerance for serialization rounding instead of failing
+  # every Apply against a live watcher.
+  $recordedStartedAt = $State.injectorStartedAt
+  $startMatches = $true
+  if ($recordedStartedAt) {
+    $recordedTime = $null
+    if ($recordedStartedAt -is [datetime]) {
+      $recordedTime = ([datetime]$recordedStartedAt).ToUniversalTime()
+    } else {
+      $parsedStartedAt = [datetime]::MinValue
+      if ([datetime]::TryParse(
+        [string]$recordedStartedAt,
+        [System.Globalization.CultureInfo]::InvariantCulture,
+        [System.Globalization.DateTimeStyles]::RoundtripKind,
+        [ref]$parsedStartedAt)) {
+        $recordedTime = $parsedStartedAt.ToUniversalTime()
+      }
+    }
+    if ($null -eq $recordedTime) {
+      $startMatches = $false
+    } else {
+      $startMatches = [Math]::Abs(($processStartedAt - $recordedTime).TotalSeconds) -le 2
+    }
+  }
   $identityMatches = [bool]($isNodeExecutable -and $nodeMatches -and $injectorMatches -and $startMatches)
 
   if (-not $identityMatches) {
