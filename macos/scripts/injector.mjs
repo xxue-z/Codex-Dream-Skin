@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import os from "node:os";
 import { readThemeTransparency, readThemeVideoPreference, themePreferencesPath } from "../assets/theme-preferences.mjs";
 import { constants as fsConstants, watch as watchFs } from "node:fs";
 import { execFile } from "node:child_process";
@@ -14,11 +15,24 @@ import {
   normalizeThemeText,
 } from "../assets/theme-package-validator.mjs";
 import { decodeAndValidateSafeCss } from "../assets/safe-css-validator.mjs";
+import {
+  clampPlaylistState,
+  playlistFingerprint,
+  playlistSummary,
+  readPlaylistState,
+  scanVideoDirectory,
+  writePlaylistStateAtomic,
+} from "../assets/video-playlist.mjs";
 
 const execFileAsync = promisify(execFile);
 const scriptPath = fileURLToPath(import.meta.url);
 const here = path.dirname(scriptPath);
 const root = path.resolve(here, "..");
+const DEFAULT_STATE_ROOT = process.platform === "win32"
+  ? path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local"), "CodexDreamSkin")
+  : path.join(os.homedir(), "Library", "Application Support", "CodexDreamSkinStudio");
+const DEFAULT_VIDEO_DIR = path.join(DEFAULT_STATE_ROOT, "videos");
+const DEFAULT_POSTER_PATH = path.join(DEFAULT_STATE_ROOT, "poster.jpeg");
 const SELECTOR_CONTRACT = JSON.parse(await fs.readFile(
   path.join(root, "assets", "selectors.json"), "utf8",
 ));
@@ -304,6 +318,9 @@ function parseArgs(argv) {
     operationToken: null,
     videoPaused: null,
     videoMuted: null,
+    videoSoftVeil: null,
+    videoDir: DEFAULT_VIDEO_DIR,
+    posterPath: DEFAULT_POSTER_PATH,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -318,6 +335,10 @@ function parseArgs(argv) {
     else if (arg === "--video-state") options.mode = "video-state";
     else if (arg === "--paused") options.videoPaused = argv[++i];
     else if (arg === "--muted") options.videoMuted = argv[++i];
+    else if (arg === "--soft-veil") options.videoSoftVeil = argv[++i];
+    else if (arg === "--video-dir") options.videoDir = path.resolve(argv[++i]);
+    else if (arg === "--poster-path") options.posterPath = path.resolve(argv[++i]);
+    else if (arg === "--rescan-playlist") options.mode = "rescan-playlist";
     else if (arg === "--timeout-ms") options.timeoutMs = Number(argv[++i]);
     else if (arg === "--screenshot") options.screenshot = path.resolve(argv[++i]);
     else if (arg === "--theme-dir") options.themeDir = path.resolve(argv[++i]);
@@ -353,17 +374,21 @@ function parseArgs(argv) {
     }
   }
   if (options.mode === "video-state") {
-    for (const key of ["videoPaused", "videoMuted"]) {
+    for (const [key, flag] of [
+      ["videoPaused", "paused"], ["videoMuted", "muted"], ["videoSoftVeil", "soft-veil"],
+    ]) {
       const value = options[key];
       if (value !== null && value !== "true" && value !== "false") {
-        throw new Error(`--${key === "videoPaused" ? "paused" : "muted"} must be true or false`);
+        throw new Error(`--${flag} must be true or false`);
       }
     }
-    if (options.videoPaused === null && options.videoMuted === null) {
-      throw new Error("video-state mode requires --paused and/or --muted");
+    if (options.videoPaused === null && options.videoMuted === null &&
+        options.videoSoftVeil === null) {
+      throw new Error("video-state mode requires --paused, --muted, and/or --soft-veil");
     }
     options.videoPaused = options.videoPaused === null ? null : options.videoPaused === "true";
     options.videoMuted = options.videoMuted === null ? null : options.videoMuted === "true";
+    options.videoSoftVeil = options.videoSoftVeil === null ? null : options.videoSoftVeil === "true";
   }
   return options;
 }
@@ -704,7 +729,81 @@ async function loadSafeCss(assetsRoot) {
   }
 }
 
-export async function loadTheme(themeDir, preferenceOptions = {}) {
+async function readPosterStamp(theme, options) {
+  if (!theme?.videoPlaylist?.enabled || !options?.posterPath) return "none";
+  try {
+    const stat = await fs.lstat(options.posterPath);
+    if (!stat.isFile() || stat.isSymbolicLink()) return "none";
+    return `${stat.size}:${stat.mtimeMs}`;
+  } catch (error) {
+    return error?.code === "ENOENT" ? "none" : "error";
+  }
+}
+
+async function readDirectoryStamp(directory) {
+  if (!directory) return "none";
+  try {
+    return String((await fs.stat(directory)).mtimeMs);
+  } catch (error) {
+    return error?.code === "ENOENT" ? "none" : "error";
+  }
+}
+
+let lastPlaylistProgressWriteAt = 0;
+async function persistPlaylistProgress(records, loaded) {
+  const playlist = loaded?.playlist;
+  if (!playlist?.statePath || !playlist?.scan?.count) return;
+  if (Date.now() - lastPlaylistProgressWriteAt < 5000) return;
+  for (const record of records.values()) {
+    const session = record?.session ?? record;
+    if (!session || session.closed) continue;
+    try {
+      const progress = await session.evaluate("window.__dreamSkinVideoProgress || null");
+      if (!progress || typeof progress !== "object") continue;
+      const persisted = await readPlaylistState(playlist.statePath, playlist.scan.count);
+      const next = clampPlaylistState({
+        ...persisted,
+        index: progress.index,
+        positionSeconds: progress.positionSeconds,
+        updatedAt: progress.updatedAt || new Date().toISOString(),
+      }, playlist.scan.count);
+      await writePlaylistStateAtomic(playlist.statePath, next);
+      playlist.state = next;
+      loaded.playlist.summary = playlistSummary(playlist.scan, next);
+      lastPlaylistProgressWriteAt = Date.now();
+      return;
+    } catch {}
+  }
+}
+
+async function readPosterOverride(candidatePath) {
+  if (!candidatePath) return null;
+  let stat;
+  try {
+    stat = await fs.lstat(candidatePath);
+  } catch {
+    return null;
+  }
+  if (!stat.isFile() || stat.isSymbolicLink() ||
+      stat.size < 1 || stat.size > MAX_ART_BYTES) return null;
+  const extension = path.extname(candidatePath).toLowerCase();
+  if (![".png", ".jpg", ".jpeg", ".webp"].includes(extension)) return null;
+  let handle;
+  try {
+    handle = await fs.open(candidatePath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+    const opened = await handle.stat();
+    if (!opened.isFile() || opened.size < 1 || opened.size > MAX_ART_BYTES) return null;
+    const bytes = await handle.readFile();
+    if (bytes.length < 1 || bytes.length > MAX_ART_BYTES) return null;
+    return { bytes, extension, path: candidatePath };
+  } catch {
+    return null;
+  } finally {
+    await handle?.close?.().catch(() => {});
+  }
+}
+
+export async function loadTheme(themeDir, preferenceOptions = {}, options = {}) {
   const requestedRoot = themeDir ?? path.join(root, "assets");
   const configPath = path.join(requestedRoot, "theme.json");
   let assetsRoot;
@@ -782,6 +881,9 @@ export async function loadTheme(themeDir, preferenceOptions = {}) {
     safeArea: choice(rawArt.safeArea, "art.safeArea", ["auto", "left", "right", "center", "none"]),
     taskMode: choice(rawArt.taskMode, "art.taskMode", ["auto", "ambient", "banner", "full", "off"]),
   };
+  const playlistEnabled = raw.id === "preset-gothic-void-crusade" &&
+    raw.videoPlaylist && typeof raw.videoPlaylist === "object" &&
+    !Array.isArray(raw.videoPlaylist) && raw.videoPlaylist.enabled === true;
   const theme = {
     schemaVersion: raw.schemaVersion,
     id: normalizeThemeText(raw.id, "custom", 80, "id", configPath),
@@ -793,6 +895,7 @@ export async function loadTheme(themeDir, preferenceOptions = {}) {
     statusText: normalizeThemeText(raw.statusText, "DREAM SKIN ONLINE", 120, "statusText", configPath),
     quote: normalizeThemeText(raw.quote, "MAKE SOMETHING WONDERFUL", 120, "quote", configPath),
     image: raw.image,
+    videoPlaylist: playlistEnabled ? { enabled: true } : undefined,
     colorMode: rawColors ? "explicit" : "auto",
     explicitColorKeys: rawColors ? colorKeys.filter((key) => Object.hasOwn(rawColors, key)) : [],
     colors: {
@@ -828,7 +931,7 @@ export async function loadTheme(themeDir, preferenceOptions = {}) {
   }
   assertContainedPath(assetsRoot, imagePath, "Theme image");
   const imageStat = await fs.stat(imagePath);
-  const extension = path.extname(theme.image).toLowerCase();
+  let extension = path.extname(theme.image).toLowerCase();
   if (![".png", ".jpg", ".jpeg", ".webp"].includes(extension)) {
     throw new Error(`Unsupported theme image format: ${extension || "missing"}`);
   }
@@ -851,9 +954,18 @@ export async function loadTheme(themeDir, preferenceOptions = {}) {
     ) {
       throw new Error(`Theme image must be a stable non-empty file no larger than ${MAX_ART_BYTES} bytes`);
     }
-    const art = await imageHandle.readFile();
+    let art = await imageHandle.readFile();
     if (art.length < 1 || art.length > MAX_ART_BYTES) {
       throw new Error(`Theme image must be a non-empty file no larger than ${MAX_ART_BYTES} bytes`);
+    }
+    let chosenImagePath = imagePath;
+    if (playlistEnabled && options.posterPath) {
+      const override = await readPosterOverride(options.posterPath);
+      if (override) {
+        art = override.bytes;
+        extension = override.extension;
+        chosenImagePath = override.path;
+      }
     }
     let videoPath;
     let videoBytes;
@@ -893,7 +1005,8 @@ export async function loadTheme(themeDir, preferenceOptions = {}) {
       art,
       assetsRoot,
       extension,
-      imagePath,
+      imagePath: chosenImagePath,
+      posterOverride: chosenImagePath !== imagePath,
       videoPath,
       videoBytes,
       videoMetadata,
@@ -927,11 +1040,11 @@ function invalidateStaticPayloadAssets() {
   staticPayloadAssets = null;
 }
 
-export async function loadPayload(themeDir, preferenceOptions = {}) {
+export async function loadPayload(themeDir, preferenceOptions = {}, options = {}) {
   const startedAt = performance.now();
   const [staticAssets, loaded] = await Promise.all([
     loadStaticPayloadAssets(),
-    loadTheme(themeDir, preferenceOptions),
+    loadTheme(themeDir, preferenceOptions, options),
   ]);
   const { css, template } = staticAssets;
   const { art, extension, safeCssRuntime, safeCssStatus, theme, videoBytes } = loaded;
@@ -947,6 +1060,28 @@ export async function loadPayload(themeDir, preferenceOptions = {}) {
   theme.artMetadata = artMetadata;
   theme.artKey = artKey;
   theme.videoKey = videoKey;
+  let playlist = null;
+  let posterStamp = "none";
+  let playlistDirStamp = "none";
+  if (theme.videoPlaylist && theme.videoPlaylist.enabled === true) {
+    posterStamp = await readPosterStamp(theme, options);
+    playlistDirStamp = await readDirectoryStamp(options.videoDir);
+    if (options.videoDir) {
+      const scan = await scanVideoDirectory(options.videoDir);
+      const statePath = path.join(
+        options.posterPath ? path.dirname(options.posterPath) : DEFAULT_STATE_ROOT,
+        "video-playlist.json",
+      );
+      const state = await readPlaylistState(statePath, scan.count);
+      playlist = {
+        scan,
+        state,
+        summary: playlistSummary(scan, state),
+        fingerprint: playlistFingerprint(scan.entries),
+        statePath,
+      };
+    }
+  }
   const mime = extension === ".jpg" || extension === ".jpeg" ? "image/jpeg"
     : extension === ".webp" ? "image/webp" : "image/png";
   const artDataUrl = `data:${mime};base64,${art.toString("base64")}`;
@@ -976,6 +1111,10 @@ export async function loadPayload(themeDir, preferenceOptions = {}) {
     videoMeta,
     payload,
     revision,
+    playlist,
+    posterStamp,
+    playlistDirStamp,
+    posterOverride: loaded.posterOverride === true,
     safeCssStatus,
     theme,
     timings: {
@@ -1029,14 +1168,56 @@ async function applyVideoToSession(session, loaded) {
   }
 }
 
+async function applyPlaylistToSession(session, loaded) {
+  const playlist = loaded?.playlist;
+  if (!playlist?.scan?.count || !playlist.scan.entries.length) return { empty: true };
+  if (typeof session?.send !== "function") return { skipped: "no-session" };
+  try {
+    await session.send("DOM.enable");
+    const doc = await session.send("DOM.getDocument", { depth: 1 });
+    let nodeId = 0;
+    for (let attempt = 0; attempt < 10 && !nodeId; attempt += 1) {
+      const found = await session.send("DOM.querySelector", {
+        nodeId: doc.root.nodeId,
+        selector: "#codex-dream-skin-videos",
+      });
+      nodeId = Number(found?.nodeId) || 0;
+      if (!nodeId) await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+    if (!nodeId) return { fallback: "input" };
+    await session.send("DOM.setFileInputFiles", {
+      files: playlist.scan.entries.map((entry) => entry.path),
+      nodeId,
+    });
+    const freshState = await readPlaylistState(playlist.statePath, playlist.scan.count);
+    playlist.state = freshState;
+    const result = await session.evaluate(
+      `window.__CODEX_DREAM_SKIN_ATTACH_VIDEOS__(${JSON.stringify(freshState)})`,
+    );
+    return result && typeof result === "object" ? result : { ready: Boolean(result) };
+  } catch (error) {
+    return { fallback: String(error?.message || "playlist") };
+  }
+}
+
+async function applyMediaToSession(session, loaded) {
+  const playlist = await applyPlaylistToSession(session, loaded);
+  if (playlist?.ready || playlist?.reused) return playlist;
+  return applyVideoToSession(session, loaded);
+}
+
 async function applyThemeToSession(session, loaded) {
   const result = await session.evaluate(loaded.payload);
-  await applyVideoToSession(session, loaded);
+  await applyMediaToSession(session, loaded);
   return result;
 }
 
 async function runVideoState(options) {
-  const state = { paused: options.videoPaused, muted: options.videoMuted };
+  const state = {
+    paused: options.videoPaused,
+    muted: options.videoMuted,
+    softVeil: options.videoSoftVeil,
+  };
   const connected = await connectCodexTargets(
     options.port,
     Math.min(options.timeoutMs, 8000),
@@ -1524,7 +1705,7 @@ async function runOneShot(options) {
   let loaded = null;
   try {
     loaded = (options.mode === "once" || options.mode === "verify" || options.reload)
-      ? await loadPayload(options.themeDir)
+      ? await loadPayload(options.themeDir, {}, options)
       : null;
   } catch (error) {
     if (operationToken) {
@@ -1717,7 +1898,7 @@ export function earlyPayloadFor(payload, revision) {
   })()`;
 }
 
-function watchPayloadSources(themeDir, onDirty) {
+function watchPayloadSources(themeDir, onDirty, options = {}) {
   const assetsRoot = path.join(root, "assets");
   const themeRoot = themeDir ?? assetsRoot;
   const watchers = [];
@@ -1730,6 +1911,8 @@ function watchPayloadSources(themeDir, onDirty) {
           (!name || name === "dream-skin.css" || name === "renderer-inject.js");
         if (kind === "static" && !staticChanged) return;
         if (kind === "preferences" && name && name !== "theme-preferences.json") return;
+        if (kind === "aux" && name && name !== "poster.jpeg" && name !== "playlist-rescan.request") return;
+        if (kind === "playlist" && name && !/\.(mp4|webm)$/i.test(name)) return;
         onDirty({ staticChanged });
       });
       watcher.on("error", (error) => {
@@ -1743,6 +1926,9 @@ function watchPayloadSources(themeDir, onDirty) {
   add(themeRoot, "theme");
   add(path.dirname(themePreferencesPath("darwin")), "preferences");
   if (themeRoot !== assetsRoot) add(assetsRoot, "static");
+  const stateRoot = options?.posterPath ? path.dirname(options.posterPath) : DEFAULT_STATE_ROOT;
+  add(stateRoot, "aux");
+  if (options?.videoDir) add(options.videoDir, "playlist");
   return () => watchers.forEach((watcher) => watcher.close());
 }
 
@@ -1843,10 +2029,14 @@ async function watchOperationState(statePath, onState) {
 }
 
 async function runWatch(options) {
-  let current = await loadPayload(options.themeDir);
+  let current = await loadPayload(options.themeDir, {}, options);
   const sessions = new Map();
   const rejected = new Set();
   let stopping = false;
+  const progressTimer = setInterval(() => {
+    persistPlaylistProgress(sessions, current).catch(() => {});
+  }, 5000);
+  progressTimer.unref?.();
   let reloadTimer = null;
   let reloadChain = Promise.resolve();
   let discoveryDelayMs = DISCOVERY_BACKOFF.initialMs;
@@ -1879,6 +2069,7 @@ async function runWatch(options) {
   });
   const stop = () => {
     stopping = true;
+    clearInterval(progressTimer);
     wakeControlLoop();
   };
   process.on("SIGINT", stop);
@@ -1990,7 +2181,7 @@ async function runWatch(options) {
     const refreshEpoch = mutationEpoch;
     let next;
     try {
-      next = await loadPayload(options.themeDir);
+      next = await loadPayload(options.themeDir, {}, options);
     } catch (error) {
       await Promise.all([...sessions.values()].map(async (record) => {
         if (record.session.closed) return;
@@ -2007,7 +2198,8 @@ async function runWatch(options) {
       }));
       throw error;
     }
-    if (next.revision === current.revision) return;
+    const samePlaylist = (next.playlist?.fingerprint ?? null) === (current.playlist?.fingerprint ?? null);
+    if (next.revision === current.revision && samePlaylist) return;
     current = next;
     if (controlOnly || mutationEpoch !== refreshEpoch) {
       console.log(`[dream-skin] staged theme ${current.theme.id} while skin is paused`);
@@ -2070,7 +2262,7 @@ async function runWatch(options) {
       });
     }, 45);
   };
-  const closePayloadWatchers = watchPayloadSources(options.themeDir, queuePayloadRefresh);
+  const closePayloadWatchers = watchPayloadSources(options.themeDir, queuePayloadRefresh, options);
   const closeOperationWatcher = await watchOperationState(options.operationState, (operation) => {
     operationSignalChain = operationSignalChain.then(async () => {
       const previousOperation = activeOperation?.token === operation.token ? activeOperation : null;
@@ -2228,7 +2420,7 @@ async function runWatch(options) {
             if (!record.needsLoadFallback) {
               setTimeout(() => {
                 if (session.closed || controlOnly) return;
-                applyVideoToSession(session, current).catch(() => {});
+                applyMediaToSession(session, current).catch(() => {});
               }, 300);
               return;
             }
@@ -2397,8 +2589,17 @@ if (path.resolve(process.argv[1] || "") === path.resolve(scriptPath)) {
     const options = parseArgs(process.argv.slice(2));
     if (options.mode === "video-state") {
       await runVideoState(options);
+    } else if (options.mode === "rescan-playlist") {
+      const stateRoot = options.posterPath ? path.dirname(options.posterPath) : DEFAULT_STATE_ROOT;
+      await fs.mkdir(stateRoot, { recursive: true, mode: 0o700 });
+      await fs.writeFile(
+        path.join(stateRoot, "playlist-rescan.request"),
+        `${Date.now()}\n`,
+        { mode: 0o600 },
+      );
+      console.log(JSON.stringify({ pass: true, mode: "rescan-playlist" }));
     } else if (options.mode === "check") {
-      const loaded = await loadPayload(options.themeDir);
+      const loaded = await loadPayload(options.themeDir, {}, options);
       // loadPayload already fails closed, but every installer, importer and
       // theme switch gates on this command, so the guard is re-asserted at the
       // CLI boundary rather than being an internal implementation detail.
@@ -2413,6 +2614,8 @@ if (path.resolve(process.argv[1] || "") === path.resolve(scriptPath)) {
         payloadBytes: Buffer.byteLength(loaded.payload),
         videoBytes: loaded.videoMeta?.bytes ?? 0,
         videoKey: loaded.videoMeta?.key ?? null,
+        videoPlaylist: loaded.playlist?.summary ?? null,
+        posterOverride: loaded.posterOverride === true,
         safeCssStatus: loaded.safeCssStatus,
         artMetadata: loaded.theme.artMetadata ?? null,
         timings: loaded.timings,

@@ -20,6 +20,11 @@
 - 原生主题管理器中的动态背景开关；Studio 的 MP4 上传/预检/导出；dreamskin.cc 服务端与 Gallery 的 API 2 校验。
 - 客户端版本提升到 1.6.0、发布说明与双端真实安装包冒烟。
 
+## 本机默认主题播放列表（客户端本地能力）
+
+默认主题另有一条**不属于 Skin API 2** 的本机播放列表：`videoPlaylist.enabled` 从固定本机目录读取 `.mp4/.webm`，通过 CDP 隐藏文件输入得到磁盘背书的 `File`，再用 `blob:` 播放。它不进入 `manifest.files`，不改变正式 ZIP 契约（仍只允许一个 `background.mp4`），也不新增监听端口。详见 `docs/theme-management.md`。
+
+
 ## 0. 结论
 
 可以支持，但不能把 MP4 当成"多一张背景图"塞进现有管线。

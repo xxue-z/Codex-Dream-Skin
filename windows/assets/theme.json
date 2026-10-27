@@ -15,5 +15,8 @@
     "focusY": 0.45,
     "safeArea": "left",
     "taskMode": "ambient"
+  },
+  "videoPlaylist": {
+    "enabled": true
   }
 }

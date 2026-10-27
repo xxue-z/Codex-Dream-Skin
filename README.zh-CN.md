@@ -160,6 +160,20 @@ macOS 菜单栏和 Windows 托盘都有「主题库 Gallery」和「在线 Studi
 
 > 可下载的用户源图是 [`docs/images/presets/arina-hashimoto-source.png`](./docs/images/presets/arina-hashimoto-source.png)（`1672 × 941`）；源码参考预设使用 [`background.jpg`](./macos/presets/preset-arina-hashimoto/background.jpg)（规范化派生 `2560 × 1440`）。上面两个效果图包含真实 UI，**只作预览，绝不能当背景导入**。背景为用户提供的 AI 生成示例，不代表 OpenAI/Codex 官方视觉或背书；未确认人物与素材权利前不得把它打进公开安装包。
 
+## 默认主题视频播放列表
+
+内置默认主题可以把本机视频文件夹作为动态背景。把 `.mp4` 或 `.webm` 直接放进：
+
+- Windows：`%LOCALAPPDATA%\CodexDreamSkin\videos\`
+- macOS：`~/Library/Application Support/CodexDreamSkinStudio/videos/`
+
+按文件名自然顺序播放（`1`、`2`、`10`），循环硬切，默认静音，重启后从上次位置续播；播不了的文件自动跳过。视频通过磁盘背书的 `blob:` URL 在本机读取：不上传、不新增监听端口、不修改 `app.asar`。
+
+默认主题在托盘/菜单里的子菜单（与“应用/静音/暂停”同级）还提供：更换海报、恢复默认海报、打开视频文件夹、重新扫描视频。覆盖海报放在 `%LOCALAPPDATA%\CodexDreamSkin\poster.jpeg`（Windows）或 `~/Library/Application Support/CodexDreamSkinStudio/poster.jpeg`（macOS），1–2 秒内生效；无效文件会保留上一张可用海报。
+
+这条本机播放列表与官方 Skin API 2 ZIP 契约分离：正式包仍只允许一个 `background.mp4`，`videos/` 仍会被 ZIP 校验器拒绝。
+
+
 ## 导入主题 ZIP
 
 从 DreamSkin.cc 装主题优先用[一键换肤](#主题库与社区)。下面是手动导入 `.zip` 的兜底路径，也适用于任何其他来源的主题包。
