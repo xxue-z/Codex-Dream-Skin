@@ -9,7 +9,6 @@
   "statusText": "VOID CRUSADE ONLINE",
   "quote": "MAKE SOMETHING WONDERFUL",
   "image": "background.jpg",
-  "videoPlaylist": { "enabled": true },
   "appearance": "dark",
   "art": {
     "focusX": 0.76,
