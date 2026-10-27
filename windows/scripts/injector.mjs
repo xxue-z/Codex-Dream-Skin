@@ -1973,7 +1973,8 @@ async function runWatch(options) {
         try {
           const now = Date.now();
           const fastPosterStamp = await readPosterStamp(loadedPayload, options);
-          const fastPlaylistStamp = await readDirectoryStamp(options.videoDir);
+          const fastPlaylistStamp = playlistEnabled(loadedPayload?.theme)
+            ? await readDirectoryStamp(options.videoDir) : "none";
           const fastRescan = await consumeRescanRequest(options);
           const fastPosterChanged = Boolean(loadedPayload) &&
             loadedPayload.posterStamp !== undefined && fastPosterStamp !== loadedPayload.posterStamp;
