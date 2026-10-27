@@ -715,8 +715,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
         return nil
       }
       let rawName = value["name"] as? String ?? id
-      let playlistEnabled = id == "preset-gothic-void-crusade" &&
-        (((value["videoPlaylist"] as? [String: Any])?["enabled"] as? Bool) == true)
+      let playlistEnabled = id == "preset-gothic-void-crusade"
       return SavedThemeOption(id: id, name: cleanMenuText(rawName), playlistEnabled: playlistEnabled)
     }
     let deduplicated = deduplicatedSavedThemes(options, currentThemeID: snapshot.themeID).sorted {

@@ -881,9 +881,10 @@ export async function loadTheme(themeDir, preferenceOptions = {}, options = {}) 
     safeArea: choice(rawArt.safeArea, "art.safeArea", ["auto", "left", "right", "center", "none"]),
     taskMode: choice(rawArt.taskMode, "art.taskMode", ["auto", "ambient", "banner", "full", "off"]),
   };
-  const playlistEnabled = raw.id === "preset-gothic-void-crusade" &&
-    raw.videoPlaylist && typeof raw.videoPlaylist === "object" &&
-    !Array.isArray(raw.videoPlaylist) && raw.videoPlaylist.enabled === true;
+  // The public Gothic preset is hash-pinned by the release build, so the
+  // client-only playlist is gated by the platform default theme id instead
+  // of mutating that reviewed preset metadata.
+  const playlistEnabled = raw.id === "preset-gothic-void-crusade";
   const theme = {
     schemaVersion: raw.schemaVersion,
     id: normalizeThemeText(raw.id, "custom", 80, "id", configPath),
