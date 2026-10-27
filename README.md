@@ -169,7 +169,7 @@ The bundled default theme can play a local folder of videos as its background. P
 
 Files play in natural filename order (`1`, `2`, `10`), loop with hard cuts, start muted, and resume from the last position after a restart. Unsupported or unreadable files are skipped. Videos are read locally with disk-backed `blob:` URLs: nothing is uploaded, no listening port is opened, and `app.asar` is never modified.
 
-The default theme's tray/menu submenu (same level as Apply / Mute / Pause) also provides Change poster, Restore default poster, Open videos folder and Rescan videos. A poster replacement at `%LOCALAPPDATA%\CodexDreamSkin\poster.jpeg` (Windows) or `~/Library/Application Support/CodexDreamSkinStudio/poster.jpeg` (macOS) takes effect within 1–2 seconds; an invalid file keeps the last good poster.
+A separate top-level Video settings menu provides Change poster, Restore default poster, Open videos folder and Rescan videos, plus auto-detect, the 1/2/5/10/30-second check interval, a custom videos folder and a 0-100% scrim transparency slider. A poster replacement at `%LOCALAPPDATA%\CodexDreamSkin\poster.jpeg` (Windows) or `~/Library/Application Support/CodexDreamSkinStudio/poster.jpeg` (macOS) takes effect within 1–2 seconds; an invalid file keeps the last good poster.
 
 This local playlist is separate from the official Skin API 2 ZIP contract: official packs still allow exactly one `background.mp4`, and `videos/` remains rejected by the ZIP validator.
 

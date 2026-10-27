@@ -19,7 +19,9 @@
 
 按文件名自然顺序循环、硬切、默认静音，并记住当前段与播放位置。视频通过 CDP 隐藏文件输入得到磁盘背书的 `File`，再转成 `blob:` URL；不读取进内存、不上传、不新增监听端口。
 
-默认主题在“已保存主题”里展开为子菜单，同级提供：应用、静音、暂停、降低遮罩、更换海报…、恢复默认海报、打开视频文件夹、重新扫描视频。海报覆盖路径为 `...\poster.jpeg`，替换后 1–2 秒内热重载；无效文件保留上一张，删除后回退内置海报。
+默认主题在“已保存主题”里展开为子菜单，只保留应用、静音和暂停。托盘/菜单栏另有顶层 **视频设置**，集中提供：当前文件夹、自动发现新视频、检测间隔（1/2/5/10/30 秒）、更改视频文件夹、恢复默认文件夹、遮罩透明度滑块，以及更换海报…、恢复默认海报、打开视频文件夹、重新扫描视频。海报覆盖路径为 `...\poster.jpeg`，替换后 1–2 秒内热重载；无效文件保留上一张，删除后回退内置海报。
+
+视频设置保存在独立的 `video-settings.json`（`schemaVersion: 1`），不会改写主题包或 `video-playlist.json`。自动发现关闭后只在点击“重新扫描视频”时刷新；自定义文件夹必须存在、不是网络路径且不含链接，切换后立即生效并从头播放。遮罩透明度 0% 对应原“强遮罩”、100% 对应原“软遮罩”，因此升级后默认视觉不变。
 
 
 ## English
@@ -51,7 +53,9 @@ The bundled default theme (`videoPlaylist.enabled = true`) reads videos from a f
 
 Files play in natural filename order, loop with hard cuts, start muted, and resume from the last position. The renderer receives disk-backed `File` objects through a hidden CDP file input and turns them into `blob:` URLs; nothing is read into memory, uploaded, or exposed on a listening port.
 
-The default theme expands to a submenu under Saved themes with Apply, Mute, Pause, Reduce scrim, Change poster…, Restore default poster, Open videos folder and Rescan videos at the same level. Replace `.../poster.jpeg` to hot-reload the poster within 1–2 seconds; invalid files keep the last good poster and deleting the override restores the bundled one.
+The default theme submenu under Saved themes keeps only Apply, Mute and Pause. A separate top-level **Video settings** menu holds the current folder, auto-detect, the 1/2/5/10/30-second check interval, change/restore videos folder, the scrim transparency slider, and Change poster…, Restore default poster, Open videos folder and Rescan videos. Replace `.../poster.jpeg` to hot-reload the poster within 1–2 seconds; invalid files keep the last good poster and deleting the override restores the bundled one.
+
+Video settings live in `video-settings.json` (`schemaVersion: 1`) and never rewrite the theme package or `video-playlist.json`. With auto-detect off, files are picked up only by Rescan videos. A custom folder must exist, must not be a network path, and must not contain links; switching applies immediately and restarts the playlist from the first file. 0% scrim matches the former strong anchors and 100% the former soft anchors, so an upgrade keeps the current look.
 
 
 ## Candidate acceptance / 候选版本验收

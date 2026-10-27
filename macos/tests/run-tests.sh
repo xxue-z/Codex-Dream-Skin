@@ -180,6 +180,7 @@ if ! /usr/bin/cmp -s "$ROOT/assets/renderer-inject.js" "$PROJECT_ROOT/windows/as
     ! /usr/bin/cmp -s "$ROOT/assets/safe-css-validator.mjs" "$PROJECT_ROOT/windows/assets/safe-css-validator.mjs" ||
     ! /usr/bin/cmp -s "$ROOT/assets/selectors.json" "$PROJECT_ROOT/windows/assets/selectors.json" ||
     ! /usr/bin/cmp -s "$ROOT/assets/theme-package-validator.mjs" "$PROJECT_ROOT/windows/assets/theme-package-validator.mjs" ||
+    ! /usr/bin/cmp -s "$ROOT/assets/video-settings.mjs" "$PROJECT_ROOT/windows/assets/video-settings.mjs" ||
     ! /usr/bin/cmp -s "$ROOT/scripts/validate-safe-css-file.mjs" "$PROJECT_ROOT/windows/scripts/validate-safe-css-file.mjs"; then
   printf 'macOS and Windows runtime assets are not byte-identical.\n' >&2
   exit 1

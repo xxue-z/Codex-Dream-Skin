@@ -23,6 +23,12 @@ import {
   scanVideoDirectory,
   writePlaylistStateAtomic,
 } from "../assets/video-playlist.mjs";
+import {
+  DEFAULT_VIDEO_SETTINGS,
+  readVideoSettings,
+  resolveVideoDirectory,
+  shouldPollPlaylist,
+} from "../assets/video-settings.mjs";
 
 const execFileAsync = promisify(execFile);
 const scriptPath = fileURLToPath(import.meta.url);
@@ -319,7 +325,9 @@ function parseArgs(argv) {
     videoPaused: null,
     videoMuted: null,
     videoSoftVeil: null,
+    videoVeil: null,
     videoDir: DEFAULT_VIDEO_DIR,
+    videoDirExplicit: false,
     posterPath: DEFAULT_POSTER_PATH,
   };
   for (let i = 0; i < argv.length; i += 1) {
@@ -336,7 +344,11 @@ function parseArgs(argv) {
     else if (arg === "--paused") options.videoPaused = argv[++i];
     else if (arg === "--muted") options.videoMuted = argv[++i];
     else if (arg === "--soft-veil") options.videoSoftVeil = argv[++i];
-    else if (arg === "--video-dir") options.videoDir = path.resolve(argv[++i]);
+    else if (arg === "--veil") options.videoVeil = argv[++i];
+    else if (arg === "--video-dir") {
+      options.videoDir = path.resolve(argv[++i]);
+      options.videoDirExplicit = true;
+    }
     else if (arg === "--poster-path") options.posterPath = path.resolve(argv[++i]);
     else if (arg === "--rescan-playlist") options.mode = "rescan-playlist";
     else if (arg === "--timeout-ms") options.timeoutMs = Number(argv[++i]);
@@ -382,9 +394,16 @@ function parseArgs(argv) {
         throw new Error(`--${flag} must be true or false`);
       }
     }
+    if (options.videoVeil !== null) {
+      const veil = Number(options.videoVeil);
+      if (!Number.isInteger(veil) || veil < 0 || veil > 100) {
+        throw new Error("--veil must be an integer from 0 to 100");
+      }
+      options.videoVeil = veil;
+    }
     if (options.videoPaused === null && options.videoMuted === null &&
-        options.videoSoftVeil === null) {
-      throw new Error("video-state mode requires --paused, --muted, and/or --soft-veil");
+        options.videoSoftVeil === null && options.videoVeil === null) {
+      throw new Error("video-state mode requires --paused, --muted, --veil, and/or --soft-veil");
     }
     options.videoPaused = options.videoPaused === null ? null : options.videoPaused === "true";
     options.videoMuted = options.videoMuted === null ? null : options.videoMuted === "true";
@@ -749,6 +768,29 @@ async function readDirectoryStamp(directory) {
   }
 }
 
+function stateRootFromOptions(options) {
+  return options?.posterPath ? path.dirname(options.posterPath) : DEFAULT_STATE_ROOT;
+}
+
+function videoSettingsPath(options) {
+  return path.join(stateRootFromOptions(options), "video-settings.json");
+}
+
+async function readEffectiveVideoSettings(options) {
+  try {
+    return await readVideoSettings(videoSettingsPath(options), {
+      playlistStatePath: path.join(stateRootFromOptions(options), "video-playlist.json"),
+    });
+  } catch {
+    return { ...DEFAULT_VIDEO_SETTINGS };
+  }
+}
+
+function effectiveVideoDir(options, settings) {
+  if (options?.videoDirExplicit) return options.videoDir;
+  return resolveVideoDirectory(settings, options?.videoDir || DEFAULT_VIDEO_DIR);
+}
+
 let lastPlaylistProgressWriteAt = 0;
 async function persistPlaylistProgress(records, loaded) {
   const playlist = loaded?.playlist;
@@ -1065,19 +1107,19 @@ export async function loadPayload(themeDir, preferenceOptions = {}, options = {}
   let posterStamp = "none";
   let playlistDirStamp = "none";
   if (theme.videoPlaylist && theme.videoPlaylist.enabled === true) {
+    const playlistSettings = options.playlistSettings ?? await readEffectiveVideoSettings(options);
+    const videoDir = effectiveVideoDir(options, playlistSettings);
+    if (!options.videoDirExplicit) options.videoDir = videoDir;
     posterStamp = await readPosterStamp(theme, options);
-    playlistDirStamp = await readDirectoryStamp(options.videoDir);
-    if (options.videoDir) {
-      const scan = await scanVideoDirectory(options.videoDir);
-      const statePath = path.join(
-        options.posterPath ? path.dirname(options.posterPath) : DEFAULT_STATE_ROOT,
-        "video-playlist.json",
-      );
+    playlistDirStamp = await readDirectoryStamp(videoDir);
+    if (videoDir) {
+      const scan = await scanVideoDirectory(videoDir);
+      const statePath = path.join(stateRootFromOptions(options), "video-playlist.json");
       const state = await readPlaylistState(statePath, scan.count);
       playlist = {
         scan,
         state,
-        summary: playlistSummary(scan, state),
+        summary: playlistSummary(scan, state, { veil: playlistSettings.veil }),
         fingerprint: playlistFingerprint(scan.entries),
         statePath,
       };
@@ -1192,8 +1234,10 @@ async function applyPlaylistToSession(session, loaded) {
     });
     const freshState = await readPlaylistState(playlist.statePath, playlist.scan.count);
     playlist.state = freshState;
+    const veil = playlist.summary?.veil;
+    const attachState = typeof veil === "number" ? { ...freshState, veil } : freshState;
     const result = await session.evaluate(
-      `window.__CODEX_DREAM_SKIN_ATTACH_VIDEOS__(${JSON.stringify(freshState)})`,
+      `window.__CODEX_DREAM_SKIN_ATTACH_VIDEOS__(${JSON.stringify(attachState)})`,
     );
     return result && typeof result === "object" ? result : { ready: Boolean(result) };
   } catch (error) {
@@ -1217,7 +1261,7 @@ async function runVideoState(options) {
   const state = {
     paused: options.videoPaused,
     muted: options.videoMuted,
-    softVeil: options.videoSoftVeil,
+    veil: options.videoVeil ?? (options.videoSoftVeil === null ? null : (options.videoSoftVeil ? 100 : 0)),
   };
   const connected = await connectCodexTargets(
     options.port,
@@ -1914,7 +1958,7 @@ function watchPayloadSources(themeDir, onDirty, options = {}) {
         if (kind === "preferences" && name && name !== "theme-preferences.json") return;
         if (kind === "aux" && name && name !== "poster.jpeg" && name !== "playlist-rescan.request") return;
         if (kind === "playlist" && name && !/\.(mp4|webm)$/i.test(name)) return;
-        onDirty({ staticChanged });
+        onDirty({ staticChanged, playlistChanged: kind === "playlist" });
       });
       watcher.on("error", (error) => {
         console.error(`[dream-skin] file watch unavailable for ${directory}: ${error.message}`);
@@ -1929,7 +1973,7 @@ function watchPayloadSources(themeDir, onDirty, options = {}) {
   if (themeRoot !== assetsRoot) add(assetsRoot, "static");
   const stateRoot = options?.posterPath ? path.dirname(options.posterPath) : DEFAULT_STATE_ROOT;
   add(stateRoot, "aux");
-  if (options?.videoDir) add(options.videoDir, "playlist");
+  if (options?.autoDiscover !== false && options?.videoDir) add(options.videoDir, "playlist");
   return () => watchers.forEach((watcher) => watcher.close());
 }
 
@@ -2030,7 +2074,13 @@ async function watchOperationState(statePath, onState) {
 }
 
 async function runWatch(options) {
-  let current = await loadPayload(options.themeDir, {}, options);
+  let lastVideoSettings = await readEffectiveVideoSettings(options);
+  let lastSettingsReadAt = Date.now();
+  if (!options.videoDirExplicit) options.videoDir = effectiveVideoDir(options, lastVideoSettings);
+  let current = await loadPayload(options.themeDir, {}, {
+    ...options,
+    playlistSettings: lastVideoSettings,
+  });
   const sessions = new Map();
   const rejected = new Set();
   let stopping = false;
@@ -2040,6 +2090,7 @@ async function runWatch(options) {
   progressTimer.unref?.();
   let reloadTimer = null;
   let reloadChain = Promise.resolve();
+  let lastPlaylistRefreshAt = 0;
   let discoveryDelayMs = DISCOVERY_BACKOFF.initialMs;
   let lastListErrorAt = 0;
   let discoveryOutageSince = 0;
@@ -2182,7 +2233,10 @@ async function runWatch(options) {
     const refreshEpoch = mutationEpoch;
     let next;
     try {
-      next = await loadPayload(options.themeDir, {}, options);
+      next = await loadPayload(options.themeDir, {}, {
+        ...options,
+        playlistSettings: lastVideoSettings,
+      });
     } catch (error) {
       await Promise.all([...sessions.values()].map(async (record) => {
         if (record.session.closed) return;
@@ -2200,7 +2254,19 @@ async function runWatch(options) {
       throw error;
     }
     const samePlaylist = (next.playlist?.fingerprint ?? null) === (current.playlist?.fingerprint ?? null);
-    if (next.revision === current.revision && samePlaylist) return;
+    const nextVeil = next.playlist?.summary?.veil;
+    const veilChanged = typeof nextVeil === "number" &&
+      nextVeil !== current.playlist?.summary?.veil;
+    if (next.revision === current.revision && samePlaylist) {
+      if (veilChanged && current.playlist) {
+        current.playlist.summary.veil = nextVeil;
+        for (const record of sessions.values()) {
+          if (record.session.closed) continue;
+          record.session.setVideoState({ veil: nextVeil }).catch(() => {});
+        }
+      }
+      return;
+    }
     current = next;
     if (controlOnly || mutationEpoch !== refreshEpoch) {
       console.log(`[dream-skin] staged theme ${current.theme.id} while skin is paused`);
@@ -2253,17 +2319,39 @@ async function runWatch(options) {
     console.log(`[dream-skin] refreshed theme ${current.theme.id} (${current.timings.buildMs}ms)`);
   };
 
-  const queuePayloadRefresh = ({ staticChanged = false } = {}) => {
+  const queuePayloadRefresh = ({ staticChanged = false, playlistChanged = false } = {}) => {
     if (staticChanged) invalidateStaticPayloadAssets();
+    let delay = 45;
+    if (playlistChanged && !staticChanged) {
+      // fs.watch is event driven, but the user-facing cadence should match the
+      // injector's configured detection interval. Coalesce bursts to at most
+      // one playlist-driven reload per interval.
+      const intervalMs = Math.max(1000,
+        (Number(lastVideoSettings?.pollIntervalSeconds) || 2) * 1000);
+      if (lastPlaylistRefreshAt > 0) {
+        delay = Math.max(delay, lastPlaylistRefreshAt + intervalMs - Date.now());
+      }
+    }
     if (reloadTimer) clearTimeout(reloadTimer);
     reloadTimer = setTimeout(() => {
       reloadTimer = null;
+      lastPlaylistRefreshAt = Date.now();
       reloadChain = reloadChain.then(refreshPayload).catch((error) => {
         console.error(`[dream-skin] theme reload failed: ${error.message}`);
       });
-    }, 45);
+    }, delay);
   };
-  const closePayloadWatchers = watchPayloadSources(options.themeDir, queuePayloadRefresh, options);
+  let closePayloadWatchers = watchPayloadSources(options.themeDir, queuePayloadRefresh, {
+    ...options,
+    autoDiscover: lastVideoSettings.autoDiscover,
+  });
+  const restartPayloadWatchers = () => {
+    closePayloadWatchers?.();
+    closePayloadWatchers = watchPayloadSources(options.themeDir, queuePayloadRefresh, {
+      ...options,
+      autoDiscover: lastVideoSettings.autoDiscover,
+    });
+  };
   const closeOperationWatcher = await watchOperationState(options.operationState, (operation) => {
     operationSignalChain = operationSignalChain.then(async () => {
       const previousOperation = activeOperation?.token === operation.token ? activeOperation : null;
@@ -2378,6 +2466,33 @@ async function runWatch(options) {
       if (controlOnly && !activeOperation) {
         releaseControlSessions();
         continue;
+      }
+
+      if (Date.now() - lastSettingsReadAt >= 800) {
+        lastSettingsReadAt = Date.now();
+        const nextVideoSettings = await readEffectiveVideoSettings(options);
+        const nextVideoDir = effectiveVideoDir(options, nextVideoSettings);
+        const directoryChanged = !options.videoDirExplicit && nextVideoDir !== options.videoDir;
+        const watcherSettingsChanged =
+          nextVideoSettings.autoDiscover !== lastVideoSettings.autoDiscover ||
+          nextVideoSettings.pollIntervalSeconds !== lastVideoSettings.pollIntervalSeconds;
+        if (directoryChanged) {
+          options.videoDir = nextVideoDir;
+          lastPlaylistRefreshAt = 0;
+        }
+        const veilChanged = typeof current?.playlist?.summary?.veil === "number" &&
+          current.playlist.summary.veil !== nextVideoSettings.veil;
+        lastVideoSettings = nextVideoSettings;
+        if (directoryChanged || watcherSettingsChanged) restartPayloadWatchers();
+        if (veilChanged) {
+          current.playlist.summary.veil = nextVideoSettings.veil;
+          for (const record of sessions.values()) {
+            if (!record.session.closed) {
+              record.session.setVideoState({ veil: nextVideoSettings.veil }).catch(() => {});
+            }
+          }
+        }
+        if (directoryChanged) queuePayloadRefresh({});
       }
 
       const activeIds = new Set(targets.map((target) => target.id));

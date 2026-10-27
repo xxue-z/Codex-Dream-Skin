@@ -20,6 +20,12 @@ import {
   scanVideoDirectory,
   writePlaylistStateAtomic,
 } from "../assets/video-playlist.mjs";
+import {
+  DEFAULT_VIDEO_SETTINGS,
+  readVideoSettings,
+  resolveVideoDirectory,
+  shouldPollPlaylist,
+} from "../assets/video-settings.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const here = path.dirname(scriptPath);
@@ -181,7 +187,9 @@ function parseArgs(argv) {
     videoPaused: null,
     videoMuted: null,
     videoSoftVeil: null,
+    videoVeil: null,
     videoDir: DEFAULT_VIDEO_DIR,
+    videoDirExplicit: false,
     posterPath: DEFAULT_POSTER_PATH,
   };
   for (let i = 0; i < argv.length; i += 1) {
@@ -209,7 +217,11 @@ function parseArgs(argv) {
     else if (arg === "--paused") options.videoPaused = argv[++i];
     else if (arg === "--muted") options.videoMuted = argv[++i];
     else if (arg === "--soft-veil") options.videoSoftVeil = argv[++i];
-    else if (arg === "--video-dir") options.videoDir = path.resolve(argv[++i]);
+    else if (arg === "--veil") options.videoVeil = argv[++i];
+    else if (arg === "--video-dir") {
+      options.videoDir = path.resolve(argv[++i]);
+      options.videoDirExplicit = true;
+    }
     else if (arg === "--poster-path") options.posterPath = path.resolve(argv[++i]);
     else if (arg === "--rescan-playlist") options.mode = "rescan-playlist";
     else throw new Error(`Unknown argument: ${arg}`);
@@ -252,9 +264,16 @@ function parseArgs(argv) {
         throw new Error(`--${flag} must be true or false`);
       }
     }
+    if (options.videoVeil !== null) {
+      const veil = Number(options.videoVeil);
+      if (!Number.isInteger(veil) || veil < 0 || veil > 100) {
+        throw new Error("--veil must be an integer from 0 to 100");
+      }
+      options.videoVeil = veil;
+    }
     if (options.videoPaused === null && options.videoMuted === null &&
-        options.videoSoftVeil === null) {
-      throw new Error("video-state mode requires --paused, --muted, and/or --soft-veil");
+        options.videoSoftVeil === null && options.videoVeil === null) {
+      throw new Error("video-state mode requires --paused, --muted, --veil, and/or --soft-veil");
     }
     options.videoPaused = options.videoPaused === null ? null : options.videoPaused === "true";
     options.videoMuted = options.videoMuted === null ? null : options.videoMuted === "true";
@@ -835,17 +854,21 @@ export async function loadPayload(themeDir = path.join(root, "assets"), candidat
   let playlist = null;
   let posterStamp = "none";
   let playlistDirStamp = "none";
+  let playlistSettings = null;
   if (playlistEnabled(loadedTheme.theme)) {
+    playlistSettings = options.playlistSettings ?? await readEffectiveVideoSettings(options);
+    const videoDir = effectiveVideoDir(options, playlistSettings);
+    if (!options.videoDirExplicit) options.videoDir = videoDir;
     posterStamp = await readPosterStamp(loadedTheme, options);
-    playlistDirStamp = await readDirectoryStamp(options.videoDir);
-    if (options.videoDir) {
-      const scan = await scanVideoDirectory(options.videoDir);
+    playlistDirStamp = await readDirectoryStamp(videoDir);
+    if (videoDir) {
+      const scan = await scanVideoDirectory(videoDir);
       const statePath = path.join(stateRootFromOptions(options), "video-playlist.json");
       const state = await readPlaylistState(statePath, scan.count);
       playlist = {
         scan,
         state,
-        summary: playlistSummary(scan, state),
+        summary: playlistSummary(scan, state, { veil: playlistSettings.veil }),
         fingerprint: playlistFingerprint(scan.entries),
         statePath,
       };
@@ -895,6 +918,27 @@ function playlistEnabled(theme) {
 
 function stateRootFromOptions(options) {
   return options?.posterPath ? path.dirname(options.posterPath) : DEFAULT_STATE_ROOT;
+}
+
+function videoSettingsPath(options) {
+  return path.join(stateRootFromOptions(options), "video-settings.json");
+}
+
+async function readEffectiveVideoSettings(options) {
+  try {
+    return await readVideoSettings(videoSettingsPath(options), {
+      playlistStatePath: path.join(stateRootFromOptions(options), "video-playlist.json"),
+    });
+  } catch {
+    // readVideoSettings already falls back on malformed input; this guards a
+    // future regression from turning a settings read into a watcher crash.
+    return { ...DEFAULT_VIDEO_SETTINGS };
+  }
+}
+
+function effectiveVideoDir(options, settings) {
+  if (options?.videoDirExplicit) return options.videoDir;
+  return resolveVideoDirectory(settings, options?.videoDir || DEFAULT_VIDEO_DIR);
 }
 
 async function readPosterStamp(loadedTheme, options) {
@@ -1185,8 +1229,10 @@ async function applyPlaylistToSession(session, loaded) {
     });
     const freshState = await readPlaylistState(playlist.statePath, playlist.scan.count);
     playlist.state = freshState;
+    const veil = playlist.summary?.veil;
+    const attachState = typeof veil === "number" ? { ...freshState, veil } : freshState;
     const result = await session.evaluate(
-      `window.__CODEX_DREAM_SKIN_ATTACH_VIDEOS__(${JSON.stringify(freshState)})`,
+      `window.__CODEX_DREAM_SKIN_ATTACH_VIDEOS__(${JSON.stringify(attachState)})`,
     );
     return result && typeof result === "object" ? result : { ready: Boolean(result) };
   } catch (error) {
@@ -1272,7 +1318,7 @@ async function runVideoState(options) {
   const state = {
     paused: options.videoPaused,
     muted: options.videoMuted,
-    softVeil: options.videoSoftVeil,
+    veil: options.videoVeil ?? (options.videoSoftVeil === null ? null : (options.videoSoftVeil ? 100 : 0)),
   };
   const connected = await connectCodexTargets(
     options.port,
@@ -1926,6 +1972,8 @@ async function runWatch(options) {
   let lastStrongThemeAuditAt = 0;
   let loadedPayload = null;
   let paused = false;
+  let lastPlaylistPollAt = 0;
+  let lastVideoSettings = null;
   const stop = () => { stopping = true; };
   const rejectTarget = (target, baseDelayMs, error = null) => {
     const previous = targetFailures.get(target.id) ?? { failures: 0, lastLogAt: 0 };
@@ -1959,7 +2007,12 @@ async function runWatch(options) {
   process.on("SIGTERM", stop);
 
   try {
-    loadedPayload = await loadPayload(options.themeDir, null, options);
+    lastVideoSettings = await readEffectiveVideoSettings(options);
+    if (!options.videoDirExplicit) options.videoDir = effectiveVideoDir(options, lastVideoSettings);
+    loadedPayload = await loadPayload(options.themeDir, null, {
+      ...options,
+      playlistSettings: lastVideoSettings,
+    });
     lastStrongThemeAuditAt = Date.now();
     paused = await fileExists(options.pauseFile);
     while (!stopping) {
@@ -1988,16 +2041,38 @@ async function runWatch(options) {
       if (!nextPaused) {
         try {
           const now = Date.now();
+          lastVideoSettings = await readEffectiveVideoSettings(options);
+          const effectiveDir = effectiveVideoDir(options, lastVideoSettings);
+          const directoryChanged = !options.videoDirExplicit && effectiveDir !== options.videoDir;
+          if (directoryChanged) {
+            options.videoDir = effectiveDir;
+            lastPlaylistPollAt = 0;
+          }
+          const currentVeil = typeof loadedPayload?.playlist?.summary?.veil === "number"
+            ? loadedPayload.playlist.summary.veil : null;
+          if (currentVeil !== null && currentVeil !== lastVideoSettings.veil) {
+            loadedPayload.playlist.summary.veil = lastVideoSettings.veil;
+            for (const session of sessions.values()) {
+              session.setVideoState({ veil: lastVideoSettings.veil }).catch(() => {});
+            }
+          }
           const fastPosterStamp = await readPosterStamp(loadedPayload, options);
-          const fastPlaylistStamp = playlistEnabled(loadedPayload?.theme)
-            ? await readDirectoryStamp(options.videoDir) : "none";
+          let fastPlaylistStamp = loadedPayload?.playlistDirStamp ?? "none";
+          if (playlistEnabled(loadedPayload?.theme) &&
+              shouldPollPlaylist(lastVideoSettings, now, lastPlaylistPollAt)) {
+            lastPlaylistPollAt = now;
+            const stamp = await readDirectoryStamp(options.videoDir);
+            // A transient stat error must not retrigger a reload every cycle.
+            fastPlaylistStamp = stamp === "error"
+              ? (loadedPayload?.playlistDirStamp ?? "none") : stamp;
+          }
           const fastRescan = await consumeRescanRequest(options);
           const fastPosterChanged = Boolean(loadedPayload) &&
             loadedPayload.posterStamp !== undefined && fastPosterStamp !== loadedPayload.posterStamp;
           const fastPlaylistChanged = Boolean(loadedPayload) &&
             loadedPayload.playlistDirStamp !== undefined && fastPlaylistStamp !== loadedPayload.playlistDirStamp;
-          let shouldAudit = fastRescan || fastPosterChanged || fastPlaylistChanged || !loadedPayload ||
-            now - lastStrongThemeAuditAt >= STRONG_THEME_AUDIT_MS;
+          let shouldAudit = fastRescan || fastPosterChanged || fastPlaylistChanged || directoryChanged ||
+            !loadedPayload || now - lastStrongThemeAuditAt >= STRONG_THEME_AUDIT_MS;
           if (!shouldAudit) {
             const userTransparency = await readThemeTransparency(loadedPayload.theme.id, {
               preferencesPath: themePreferencesPath("win32"),
@@ -2015,8 +2090,11 @@ async function runWatch(options) {
             const candidateTheme = await loadTheme(options.themeDir, {}, options);
             lastStrongThemeAuditAt = now;
             if (!loadedPayload || candidateTheme.fingerprint !== loadedPayload.fingerprint ||
-                fastRescan || fastPosterChanged || fastPlaylistChanged) {
-              nextPayload = await loadPayload(options.themeDir, candidateTheme, options);
+                fastRescan || fastPosterChanged || fastPlaylistChanged || directoryChanged) {
+              nextPayload = await loadPayload(options.themeDir, candidateTheme, {
+                ...options,
+                playlistSettings: lastVideoSettings,
+              });
             } else {
               loadedPayload.sourceStamp = candidateTheme.sourceStamp;
             }

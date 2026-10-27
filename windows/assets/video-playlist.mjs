@@ -194,7 +194,10 @@ export function playlistDisplayName(entry) {
   return entry && typeof entry.name === "string" ? entry.name : "";
 }
 
-export function playlistSummary(scan, state) {
+export function playlistSummary(scan, state, options = {}) {
+  const numericVeil = Number(options.veil);
+  const veil = Number.isFinite(numericVeil)
+    ? Math.min(100, Math.max(0, Math.round(numericVeil))) : 100;
   return {
     count: scan?.count ?? 0,
     fingerprint: playlistFingerprint(scan?.entries ?? []),
@@ -206,6 +209,9 @@ export function playlistSummary(scan, state) {
     positionSeconds: state?.positionSeconds ?? 0,
     muted: state?.muted !== false,
     paused: state?.paused === true,
+    // softVeil stays for state-file compatibility with 1.6.x clients; the
+    // renderer now consumes the numeric veil from video-settings.json.
     softVeil: state?.softVeil !== false,
+    veil,
   };
 }

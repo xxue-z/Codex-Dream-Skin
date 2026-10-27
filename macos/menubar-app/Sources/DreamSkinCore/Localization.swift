@@ -73,7 +73,17 @@ public struct DreamSkinCopy: Sendable {
     case changeBackground
     case videoMute
     case videoPause
-    case videoSoftVeil
+    case videoSettings
+    case videoSettingsAutoDiscover
+    case videoSettingsInterval
+    case videoSettingsSeconds
+    case videoSettingsChangeFolder
+    case videoSettingsRestoreFolder
+    case videoSettingsVeil
+    case videoSettingsVeilLimits
+    case videoSettingsCurrentFolder
+    case videoSettingsDefaultFolder
+    case videoSettingsUnavailable
     case changePoster
     case restoreDefaultPoster
     case openVideosFolder
@@ -181,6 +191,12 @@ public struct DreamSkinCopy: Sendable {
     case legacyDisabledTitle
     case legacyDisabledMessage
     case legacyPartialTitle
+    case folderNotFound
+    case folderNetwork
+    case folderInvalid
+    case folderMissing
+    case folderSettingsInvalid
+    case videoFolderTitle
     case ok
     }
 
@@ -225,7 +241,17 @@ public struct DreamSkinCopy: Sendable {
     case .changeBackground: return chinese ? "换一张背景图…" : "Choose background image…"
     case .videoMute: return chinese ? "静音" : "Mute"
     case .videoPause: return chinese ? "暂停" : "Pause"
-    case .videoSoftVeil: return chinese ? "降低遮罩" : "Reduce scrim"
+    case .videoSettings: return chinese ? "视频设置" : "Video settings"
+    case .videoSettingsAutoDiscover: return chinese ? "自动发现新视频" : "Auto-detect new videos"
+    case .videoSettingsInterval: return chinese ? "检测间隔" : "Check interval"
+    case .videoSettingsSeconds: return chinese ? "%d 秒" : "%d s"
+    case .videoSettingsChangeFolder: return chinese ? "更改视频文件夹…" : "Change videos folder…"
+    case .videoSettingsRestoreFolder: return chinese ? "恢复默认文件夹" : "Restore default folder"
+    case .videoSettingsVeil: return chinese ? "遮罩透明度：%d%%" : "Scrim transparency: %d%%"
+    case .videoSettingsVeilLimits: return chinese ? "0% 强遮罩 · 100% 轻遮罩" : "0% strong scrim · 100% light scrim"
+    case .videoSettingsCurrentFolder: return chinese ? "当前文件夹：%@" : "Folder: %@"
+    case .videoSettingsDefaultFolder: return chinese ? "默认" : "Default"
+    case .videoSettingsUnavailable: return chinese ? "仅默认主题生效" : "Applies to the default theme only"
     case .changePoster: return chinese ? "更换海报…" : "Change poster…"
     case .restoreDefaultPoster: return chinese ? "恢复默认海报" : "Restore default poster"
     case .openVideosFolder: return chinese ? "打开视频文件夹" : "Open videos folder"
@@ -333,6 +359,12 @@ public struct DreamSkinCopy: Sendable {
     case .legacyDisabledTitle: return chinese ? "旧菜单已停用" : "Old menu disabled"
     case .legacyDisabledMessage: return chinese ? "SwiftBar 插件已安全改名保留。" : "The SwiftBar plugin was safely renamed and kept."
     case .legacyPartialTitle: return chinese ? "部分旧插件未能停用" : "Some old plugins could not be disabled"
+    case .folderNotFound: return chinese ? "请选择已存在的视频文件夹。" : "Choose an existing videos folder."
+    case .folderNetwork: return chinese ? "本机视频播放不支持网络文件夹。" : "Network folders are not supported for local video playback."
+    case .folderInvalid: return chinese ? "请选择不含链接的普通文件夹。" : "Choose a normal folder that does not contain links."
+    case .folderMissing: return chinese ? "已配置的视频文件夹不存在。" : "The configured videos folder is missing."
+    case .folderSettingsInvalid: return chinese ? "视频设置文件无效，请修复或删除 video-settings.json 后重试。" : "Video settings are invalid. Fix or remove video-settings.json, then retry."
+    case .videoFolderTitle: return chinese ? "选择视频文件夹" : "Choose a videos folder"
     case .ok: return chinese ? "好" : "OK"
     }
   }

@@ -26,6 +26,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
   private var transparencySlider: NSSlider?
   private var transparencyLabel: NSTextField?
   private var transparencyResetItem: NSMenuItem?
+  private var videoVeilSlider: NSSlider?
+  private var videoVeilLabel: NSTextField?
   private var statusRefreshRunning = false
   private var operationInFlight = false
   private var engineInstallInFlight = false
@@ -49,8 +51,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
     "assets/safe-css-validator.mjs",
     "assets/selectors.json",
     "assets/theme-package-validator.mjs",
+    "assets/mp4-metadata.mjs",
     "assets/theme-preferences.mjs",
     "assets/theme.json",
+    "assets/video-playlist.mjs",
+    "assets/video-settings.mjs",
     "presets/preset-gothic-void-crusade/background.jpg",
     "presets/preset-gothic-void-crusade/theme.json",
     "scripts/apply-from-menubar-macos.sh",
@@ -334,6 +339,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
 
     menu.addItem(.separator())
     addThemeMenu(enabled: !busy)
+    addVideoSettingsMenu(enabled: !busy)
     addLinksMenu()
 
     menu.addItem(.separator())
@@ -361,6 +367,87 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
     addActionItem(copy.text(.openImages), action: #selector(openImagesFolder), to: submenu)
     root.submenu = submenu
     menu.addItem(root)
+  }
+
+  private func addVideoSettingsMenu(enabled: Bool) {
+    let settings = VideoSettingsStore.load(stateRoot: stateRootURL)
+    let root = NSMenuItem(title: copy.text(.videoSettings), action: nil, keyEquivalent: "")
+    let submenu = NSMenu(title: copy.text(.videoSettings))
+    submenu.autoenablesItems = false
+    let folderLabel = settings.videoDirectory.map { shortenMenuPath($0) }
+      ?? copy.text(.videoSettingsDefaultFolder)
+    addDisabledItem(copy.format(.videoSettingsCurrentFolder, folderLabel), to: submenu)
+    submenu.addItem(.separator())
+
+    let autoItem = addActionItem(copy.text(.videoSettingsAutoDiscover),
+                                 action: #selector(toggleVideoAutoDiscover(_:)),
+                                 enabled: enabled, to: submenu)
+    autoItem.state = settings.autoDiscover ? .on : .off
+
+    let intervalRoot = NSMenuItem(title: copy.text(.videoSettingsInterval),
+                                  action: nil, keyEquivalent: "")
+    let intervalMenu = NSMenu(title: copy.text(.videoSettingsInterval))
+    intervalMenu.autoenablesItems = false
+    for seconds in VideoSettings.pollIntervalOptions {
+      let item = addActionItem(copy.format(.videoSettingsSeconds, seconds),
+                               action: #selector(selectVideoInterval(_:)),
+                               enabled: enabled, to: intervalMenu)
+      item.tag = seconds
+      item.state = settings.pollIntervalSeconds == seconds ? .on : .off
+    }
+    intervalRoot.submenu = intervalMenu
+    submenu.addItem(intervalRoot)
+
+    addActionItem(copy.text(.videoSettingsChangeFolder),
+                  action: #selector(chooseVideoFolder), enabled: enabled, to: submenu)
+    addActionItem(copy.text(.videoSettingsRestoreFolder),
+                  action: #selector(restoreVideoFolder),
+                  enabled: enabled && settings.videoDirectory != nil, to: submenu)
+    submenu.addItem(.separator())
+    addVideoVeilControl(settings: settings, enabled: enabled, to: submenu)
+    submenu.addItem(.separator())
+    addActionItem(copy.text(.changePoster), action: #selector(choosePlaylistPoster),
+                  enabled: enabled, to: submenu)
+    addActionItem(copy.text(.restoreDefaultPoster), action: #selector(restorePlaylistPoster),
+                  enabled: enabled, to: submenu)
+    addActionItem(copy.text(.openVideosFolder), action: #selector(openVideosFolder),
+                  enabled: enabled, to: submenu)
+    addActionItem(copy.text(.rescanVideos), action: #selector(rescanVideos),
+                  enabled: enabled, to: submenu)
+    root.submenu = submenu
+    menu.addItem(root)
+  }
+
+  private func addVideoVeilControl(settings: VideoSettings, enabled: Bool, to submenu: NSMenu) {
+    let value = min(100, max(0, settings.veil))
+    let view = NSView(frame: NSRect(x: 0, y: 0, width: 310, height: 82))
+    let label = NSTextField(labelWithString: copy.format(.videoSettingsVeil, value))
+    label.frame = NSRect(x: 18, y: 55, width: 280, height: 20)
+    label.font = .menuFont(ofSize: 12)
+    view.addSubview(label)
+    let slider = NSSlider(value: Double(value), minValue: 0, maxValue: 100,
+                          target: self, action: #selector(changeVideoVeil(_:)))
+    slider.frame = NSRect(x: 18, y: 27, width: 274, height: 24)
+    slider.isContinuous = false // AppKit sends the action on release (and keyboard adjustment).
+    slider.isEnabled = enabled
+    slider.setAccessibilityLabel(copy.text(.videoSettingsVeil).replacingOccurrences(of: "%d%%", with: ""))
+    view.addSubview(slider)
+    let limits = NSTextField(labelWithString: copy.text(.videoSettingsVeilLimits))
+    limits.frame = NSRect(x: 18, y: 6, width: 280, height: 18)
+    limits.font = .systemFont(ofSize: 10)
+    limits.textColor = .secondaryLabelColor
+    view.addSubview(limits)
+    let item = NSMenuItem()
+    item.view = view
+    submenu.addItem(item)
+    videoVeilSlider = slider
+    videoVeilLabel = label
+  }
+
+  private func shortenMenuPath(_ value: String) -> String {
+    let cleaned = cleanMenuText(value)
+    if cleaned.count <= 64 { return cleaned }
+    return "…" + cleaned.suffix(63)
   }
 
   private var transparencyPreferencesURL: URL {
@@ -565,19 +652,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
                                         action: #selector(togglePlaylistPause(_:)),
                                         enabled: enabled, to: themeMenu)
           pauseItem.state = playlist.paused ? .on : .off
-          let veilItem = addActionItem(copy.text(.videoSoftVeil),
-                                       action: #selector(togglePlaylistSoftVeil(_:)),
-                                       enabled: enabled, to: themeMenu)
-          veilItem.state = playlist.softVeil ? .on : .off
-          themeMenu.addItem(.separator())
-          addActionItem(copy.text(.changePoster), action: #selector(choosePlaylistPoster),
-                        enabled: enabled, to: themeMenu)
-          addActionItem(copy.text(.restoreDefaultPoster), action: #selector(restorePlaylistPoster),
-                        enabled: enabled, to: themeMenu)
-          addActionItem(copy.text(.openVideosFolder), action: #selector(openVideosFolder),
-                        enabled: enabled, to: themeMenu)
-          addActionItem(copy.text(.rescanVideos), action: #selector(rescanVideos),
-                        enabled: enabled, to: themeMenu)
           themeRoot.submenu = themeMenu
           submenu.addItem(themeRoot)
           continue
@@ -803,9 +877,78 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
     runPlaylistScript(arguments: ["set", "paused", next ? "true" : "false"])
   }
 
-  @objc private func togglePlaylistSoftVeil(_ sender: NSMenuItem) {
-    let next = !PlaylistPreferencesStore.load(stateRoot: stateRootURL).softVeil
-    runPlaylistScript(arguments: ["set", "soft-veil", next ? "true" : "false"])
+  @objc private func toggleVideoAutoDiscover(_ sender: NSMenuItem) {
+    var settings = VideoSettingsStore.load(stateRoot: stateRootURL)
+    settings.autoDiscover.toggle()
+    saveVideoSettings(settings)
+  }
+
+  @objc private func selectVideoInterval(_ sender: NSMenuItem) {
+    var settings = VideoSettingsStore.load(stateRoot: stateRootURL)
+    settings.pollIntervalSeconds = sender.tag
+    saveVideoSettings(settings)
+  }
+
+  private func saveVideoSettings(_ settings: VideoSettings) {
+    do {
+      try VideoSettingsStore.save(settings, stateRoot: stateRootURL)
+      runPlaylistScript(arguments: ["rescan"])
+    } catch {
+      showVideoSettingsError(error)
+    }
+  }
+
+  private func showVideoSettingsError(_ error: Error) {
+    if let typed = error as? VideoSettingsError, typed == .invalidSettings {
+      showError(title: copy.text(.videoSettings), message: copy.text(.folderSettingsInvalid))
+      return
+    }
+    showError(title: copy.text(.videoSettings), message: error.localizedDescription)
+  }
+
+  @objc private func chooseVideoFolder() {
+    let panel = NSOpenPanel()
+    panel.title = copy.text(.videoFolderTitle)
+    panel.prompt = copy.resolvedLanguage == .chinese ? "选择" : "Choose"
+    panel.canChooseDirectories = true
+    panel.canChooseFiles = false
+    panel.allowsMultipleSelection = false
+    panel.canCreateDirectories = true
+    activateForUserInteraction()
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    do {
+      let validated = try VideoSettingsStore.validateDirectory(url)
+      var settings = VideoSettingsStore.load(stateRoot: stateRootURL)
+      settings.videoDirectory = validated.path
+      saveVideoSettings(settings)
+    } catch VideoSettingsError.networkPath {
+      showError(title: copy.text(.videoSettings), message: copy.text(.folderNetwork))
+    } catch VideoSettingsError.symlink {
+      showError(title: copy.text(.videoSettings), message: copy.text(.folderInvalid))
+    } catch {
+      showError(title: copy.text(.videoSettings), message: copy.text(.folderNotFound))
+    }
+  }
+
+  @objc private func restoreVideoFolder() {
+    var settings = VideoSettingsStore.load(stateRoot: stateRootURL)
+    settings.videoDirectory = nil
+    saveVideoSettings(settings)
+  }
+
+  @objc private func changeVideoVeil(_ sender: NSSlider) {
+    let value = min(100, max(0, Int(sender.doubleValue.rounded())))
+    var settings = VideoSettingsStore.load(stateRoot: stateRootURL)
+    settings.veil = value
+    do {
+      try VideoSettingsStore.save(settings, stateRoot: stateRootURL)
+    } catch {
+      showVideoSettingsError(error)
+      return
+    }
+    videoVeilSlider?.integerValue = value
+    videoVeilLabel?.stringValue = copy.format(.videoSettingsVeil, value)
+    runPlaylistScript(arguments: ["apply-veil", String(value)])
   }
 
   @objc private func choosePlaylistPoster() {
@@ -826,7 +969,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
   }
 
   @objc private func openVideosFolder() {
-    runPlaylistScript(arguments: ["open-videos"])
+    let settings = VideoSettingsStore.load(stateRoot: stateRootURL)
+    let url = VideoSettingsStore.effectiveDirectory(settings, stateRoot: stateRootURL)
+    if !fileManager.fileExists(atPath: url.path) {
+      if settings.videoDirectory != nil {
+        showError(title: copy.text(.openVideosFolder), message: copy.text(.folderMissing))
+        return
+      }
+      try? fileManager.createDirectory(at: url, withIntermediateDirectories: true)
+    }
+    NSWorkspace.shared.open(url)
   }
 
   @objc private func rescanVideos() {

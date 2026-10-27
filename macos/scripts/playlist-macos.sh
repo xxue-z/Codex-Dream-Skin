@@ -49,13 +49,22 @@ case "${1:-}" in
     /bin/rm -f "$POSTER_FILE"
     ;;
   open-videos)
-    /usr/bin/open "$VIDEOS_DIR"
+    target="${2:-$VIDEOS_DIR}"
+    [ -d "$target" ] || { printf 'Videos folder not found\n' >&2; exit 1; }
+    /usr/bin/open "$target"
+    ;;
+  apply-veil)
+    value="${2:-}"
+    case "$value" in ''|*[!0-9]*) printf 'Veil must be 0-100\n' >&2; exit 1 ;; esac
+    [ "$value" -ge 0 ] && [ "$value" -le 100 ] || { printf 'Veil must be 0-100\n' >&2; exit 1; }
+    ensure_node_runtime || exit 1
+    "$NODE" "$SCRIPT_DIR/injector.mjs" --video-state --veil "$value" >/dev/null 2>&1 || true
     ;;
   rescan)
     /bin/date +%s > "$STATE_ROOT/playlist-rescan.request"
     ;;
   *)
-    printf 'Usage: playlist-macos.sh state|set|poster|restore-poster|open-videos|rescan\n' >&2
+    printf 'Usage: playlist-macos.sh state|set|poster|restore-poster|open-videos|rescan|apply-veil\n' >&2
     exit 1
     ;;
 esac

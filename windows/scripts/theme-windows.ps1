@@ -460,9 +460,212 @@ function Request-DreamSkinPlaylistRescan {
     -Content ([string][DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
 }
 
+function Get-DreamSkinVideoSettingsPath {
+  param([string]$StateRoot = (Join-Path $env:LOCALAPPDATA 'CodexDreamSkin'))
+  return (Join-Path ([System.IO.Path]::GetFullPath($StateRoot)) 'video-settings.json')
+}
+
+function ConvertTo-DreamSkinVideoDirectoryValue {
+  # Normalizes a directory path read from JSON. Invalid values are ignored so a
+  # hand-edited settings file cannot redirect playback outside an absolute path.
+  param([AllowNull()]$Value)
+  if ($null -eq $Value) { return $null }
+  $text = [string]$Value
+  if ([string]::IsNullOrWhiteSpace($text)) { return $null }
+  if ($text.Length -gt 1024) { return $null }
+  if ($text.StartsWith('\\') -or $text.StartsWith('//')) { return $null }
+  if (-not [System.IO.Path]::IsPathRooted($text)) { return $null }
+  try { return [System.IO.Path]::GetFullPath($text) } catch { return $null }
+}
+
+function ConvertFrom-DreamSkinVideoSettingsObject {
+  param(
+    $Raw,
+    [int]$LegacyVeil = 100
+  )
+  $autoDiscover = $true
+  $interval = 2
+  $directory = $null
+  $veil = $LegacyVeil
+  if ($null -ne $Raw) {
+    if ($null -ne $Raw.PSObject.Properties['autoDiscover'] -and
+        $Raw.autoDiscover -is [bool]) {
+      $autoDiscover = [bool]$Raw.autoDiscover
+    }
+    if ($null -ne $Raw.PSObject.Properties['pollIntervalSeconds']) {
+      $candidate = 0
+      if ([int]::TryParse([string]$Raw.pollIntervalSeconds, [ref]$candidate) -and
+          @(1, 2, 5, 10, 30) -contains $candidate) {
+        $interval = $candidate
+      }
+    }
+    if ($null -ne $Raw.PSObject.Properties['videoDirectory']) {
+      $directory = ConvertTo-DreamSkinVideoDirectoryValue -Value $Raw.videoDirectory
+    }
+    if ($null -ne $Raw.PSObject.Properties['veil']) {
+      $candidateVeil = 0
+      if ([int]::TryParse([string]$Raw.veil, [ref]$candidateVeil)) {
+        $veil = [Math]::Min(100, [Math]::Max(0, $candidateVeil))
+      }
+    }
+  }
+  return [pscustomobject]@{
+    AutoDiscover = $autoDiscover
+    PollIntervalSeconds = $interval
+    VideoDirectory = $directory
+    Veil = $veil
+  }
+}
+
+function Read-DreamSkinVideoSettingsFile {
+  # Strict reader for writers: a malformed existing file must never be
+  # silently overwritten with defaults.
+  param(
+    [Parameter(Mandatory = $true)][string]$StateRoot,
+    [int]$LegacyVeil = 100
+  )
+  $path = Get-DreamSkinVideoSettingsPath -StateRoot $StateRoot
+  if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $null }
+  $item = Get-Item -LiteralPath $path -Force -ErrorAction Stop
+  if ($item.Length -gt (64 * 1024)) { throw 'Video settings file is too large.' }
+  $raw = $null
+  try {
+    $raw = (Read-DreamSkinUtf8File -Path $path) | ConvertFrom-Json -ErrorAction Stop
+  } catch {
+    throw 'Video settings file is invalid JSON.'
+  }
+  if ($null -eq $raw -or $raw -is [string] -or $raw -is [array] -or
+      $null -eq $raw.PSObject.Properties['schemaVersion'] -or
+      [int]$raw.schemaVersion -ne 1) {
+    throw 'Video settings file has an unsupported schema.'
+  }
+  return ConvertFrom-DreamSkinVideoSettingsObject -Raw $raw -LegacyVeil $LegacyVeil
+}
+
+function Get-DreamSkinVideoSettings {
+  param([string]$StateRoot = (Join-Path $env:LOCALAPPDATA 'CodexDreamSkin'))
+  $legacyVeil = 100
+  try {
+    $playlistPath = Get-DreamSkinPlaylistStatePath -StateRoot $StateRoot
+    if (Test-Path -LiteralPath $playlistPath -PathType Leaf) {
+      $rawPlaylist = (Read-DreamSkinUtf8File -Path $playlistPath) | ConvertFrom-Json -ErrorAction Stop
+      if ($null -ne $rawPlaylist.softVeil -and $rawPlaylist.softVeil -eq $false) {
+        $legacyVeil = 0
+      }
+    }
+  } catch {}
+  try {
+    $strict = Read-DreamSkinVideoSettingsFile -StateRoot $StateRoot -LegacyVeil $legacyVeil
+    if ($null -ne $strict) { return $strict }
+  } catch {}
+  return (ConvertFrom-DreamSkinVideoSettingsObject -Raw $null -LegacyVeil $legacyVeil)
+}
+
+function Set-DreamSkinVideoSettings {
+  param(
+    [string]$StateRoot = (Join-Path $env:LOCALAPPDATA 'CodexDreamSkin'),
+    [Nullable[bool]]$AutoDiscover = $null,
+    [Nullable[int]]$PollIntervalSeconds = $null,
+    [Nullable[int]]$Veil = $null,
+    [string]$VideoDirectory = $null,
+    [switch]$ResetVideoDirectory
+  )
+  $root = [System.IO.Path]::GetFullPath($StateRoot)
+  $legacyVeil = 100
+  try {
+    $playlistPath = Get-DreamSkinPlaylistStatePath -StateRoot $root
+    if (Test-Path -LiteralPath $playlistPath -PathType Leaf) {
+      $rawPlaylist = (Read-DreamSkinUtf8File -Path $playlistPath) | ConvertFrom-Json -ErrorAction Stop
+      if ($null -ne $rawPlaylist.softVeil -and $rawPlaylist.softVeil -eq $false) {
+        $legacyVeil = 0
+      }
+    }
+  } catch {}
+  $current = Read-DreamSkinVideoSettingsFile -StateRoot $root -LegacyVeil $legacyVeil
+  if ($null -eq $current) {
+    $current = ConvertFrom-DreamSkinVideoSettingsObject -Raw $null -LegacyVeil $legacyVeil
+  }
+  $nextAutoDiscover = $current.AutoDiscover
+  $nextInterval = $current.PollIntervalSeconds
+  $nextDirectory = $current.VideoDirectory
+  $nextVeil = $current.Veil
+  if ($null -ne $AutoDiscover) { $nextAutoDiscover = [bool]$AutoDiscover }
+  if ($null -ne $PollIntervalSeconds) {
+    $candidate = [int]$PollIntervalSeconds
+    if (@(1, 2, 5, 10, 30) -notcontains $candidate) {
+      throw 'Detection interval must be 1, 2, 5, 10, or 30 seconds.'
+    }
+    $nextInterval = $candidate
+  }
+  if ($null -ne $Veil) {
+    $nextVeil = [Math]::Min(100, [Math]::Max(0, [int]$Veil))
+  }
+  if ($ResetVideoDirectory) {
+    $nextDirectory = $null
+  } elseif ($PSBoundParameters.ContainsKey('VideoDirectory')) {
+    $nextDirectory = ConvertTo-DreamSkinVideoDirectory -Path $VideoDirectory
+  }
+  $payload = [ordered]@{
+    schemaVersion = 1
+    autoDiscover = $nextAutoDiscover
+    pollIntervalSeconds = $nextInterval
+    videoDirectory = $nextDirectory
+    veil = $nextVeil
+    updatedAt = (Get-Date).ToUniversalTime().ToString('o')
+  }
+  $json = ($payload | ConvertTo-Json -Depth 4) + "`r`n"
+  New-Item -ItemType Directory -Force -Path $root | Out-Null
+  Write-DreamSkinUtf8FileAtomically -Path (Get-DreamSkinVideoSettingsPath -StateRoot $root) -Content $json
+  return (ConvertFrom-DreamSkinVideoSettingsObject -Raw ($json | ConvertFrom-Json) -LegacyVeil $legacyVeil)
+}
+
+function Set-DreamSkinVideoVeil {
+  param(
+    [Parameter(Mandatory = $true)][int]$Veil,
+    [string]$StateRoot = (Join-Path $env:LOCALAPPDATA 'CodexDreamSkin')
+  )
+  $saved = Set-DreamSkinVideoSettings -StateRoot $StateRoot -Veil $Veil
+  return $saved.Veil
+}
+
+function ConvertTo-DreamSkinVideoDirectory {
+  # Validation for a user-chosen folder. Network shares are rejected because a
+  # dead UNC path blocks directory stat calls for an unbounded time.
+  param([Parameter(Mandatory = $true)][string]$Path)
+  if ([string]::IsNullOrWhiteSpace($Path)) {
+    throw 'Choose a videos folder.'
+  }
+  if ($Path.StartsWith('\\') -or $Path.StartsWith('//')) {
+    throw 'Network folders are not supported for local video playback.'
+  }
+  $full = [System.IO.Path]::GetFullPath($Path)
+  if (-not (Test-Path -LiteralPath $full -PathType Container)) {
+    throw 'Choose an existing videos folder.'
+  }
+  Assert-DreamSkinNoReparseComponents -Path $full
+  return $full
+}
+
+function Get-DreamSkinEffectiveVideoDirectory {
+  param([string]$StateRoot = (Join-Path $env:LOCALAPPDATA 'CodexDreamSkin'))
+  $root = [System.IO.Path]::GetFullPath($StateRoot)
+  $settings = Get-DreamSkinVideoSettings -StateRoot $root
+  if ($settings.VideoDirectory) { return $settings.VideoDirectory }
+  return (Join-Path $root 'videos')
+}
+
 function Open-DreamSkinVideosFolder {
   param([string]$StateRoot = (Join-Path $env:LOCALAPPDATA 'CodexDreamSkin'))
-  $videos = Join-Path ([System.IO.Path]::GetFullPath($StateRoot)) 'videos'
+  $root = [System.IO.Path]::GetFullPath($StateRoot)
+  $settings = Get-DreamSkinVideoSettings -StateRoot $root
+  if ($settings.VideoDirectory) {
+    if (-not (Test-Path -LiteralPath $settings.VideoDirectory -PathType Container)) {
+      throw 'The configured videos folder is missing: ' + $settings.VideoDirectory
+    }
+    Start-Process -FilePath explorer.exe -ArgumentList (@('"' + $settings.VideoDirectory + '"')) | Out-Null
+    return
+  }
+  $videos = Join-Path $root 'videos'
   New-Item -ItemType Directory -Force -Path $videos | Out-Null
   Start-Process -FilePath explorer.exe -ArgumentList (@('"' + $videos + '"')) | Out-Null
 }
