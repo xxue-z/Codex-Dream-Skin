@@ -157,7 +157,15 @@ try {
   }
 
   $startSource = [System.IO.File]::ReadAllText((Join-Path $Root 'scripts\start-dream-skin.ps1'))
-  $communitySource = [System.IO.File]::ReadAllText((Join-Path $Root 'scripts\apply-community-theme.ps1'))
+  $communitySource = (@(
+    'apply-community-theme.ps1',
+    'ds-cm-msg.ps1',
+    'ds-cm-req.ps1',
+    'ds-cm-data.ps1',
+    'ds-cm-snap.ps1'
+  ) | ForEach-Object {
+    [System.IO.File]::ReadAllText((Join-Path $Root "scripts\$_"))
+  }) -join "`n"
   $commonSource = [System.IO.File]::ReadAllText((Join-Path $Root 'scripts\common-windows.ps1'))
   $readerStart = $commonSource.IndexOf('function Read-DreamSkinStartResult')
   $readerEnd = $commonSource.IndexOf('function Enter-DreamSkinOperationLock', $readerStart)

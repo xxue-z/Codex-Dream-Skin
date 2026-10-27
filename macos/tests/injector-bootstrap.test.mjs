@@ -217,7 +217,7 @@ assert.match(
 );
 assert.match(
   source,
-  /const earlyApplied = await session\.evaluate\([\s\S]*if \(!earlyApplied\) \{[\s\S]*applyToSession/,
+  /const earlyApplied = await session\.evaluate\([\s\S]*if \(!earlyApplied\) \{[\s\S]*applyThemeToSession/,
   "The watcher must not run the full payload twice after a successful early install.",
 );
 assert.match(
