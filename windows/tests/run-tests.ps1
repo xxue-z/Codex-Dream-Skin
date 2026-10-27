@@ -1623,6 +1623,39 @@ try {
     }
   }
 
+  # Windows PowerShell 5.1 ConvertFrom-Json returns a DateTime for this field.
+  # Reproduce that shape so Apply can still stop its own live watcher.
+  $dateTimeInjectorProcess = Start-Process -FilePath $node.Path `
+    -ArgumentList $recordedInjectorArguments -WindowStyle Hidden -PassThru
+  try {
+    Start-Sleep -Milliseconds 250
+    if ($dateTimeInjectorProcess.HasExited) {
+      throw 'Recorded injector DateTime fixture exited before its identity could be tested.'
+    }
+    $dateTimeState = [pscustomobject]@{
+      injectorPid = $dateTimeInjectorProcess.Id
+      injectorStartedAt = [datetime]::Parse(
+        $dateTimeInjectorProcess.StartTime.ToUniversalTime().ToString('o')
+      ).ToUniversalTime()
+      injectorPath = $recordedInjectorFixture
+      nodePath = $node.Path
+      port = $recordedInjectorPort
+      browserId = $recordedInjectorBrowserId
+    }
+    if (-not (Stop-DreamSkinRecordedInjector -State $dateTimeState)) {
+      throw 'DateTime-shaped recorded injector identity did not report a successful stop.'
+    }
+    $dateTimeInjectorProcess.Refresh()
+    if (-not $dateTimeInjectorProcess.HasExited) {
+      throw 'DateTime-shaped recorded injector was still running after shutdown returned.'
+    }
+  } finally {
+    if (-not $dateTimeInjectorProcess.HasExited) {
+      Stop-Process -InputObject $dateTimeInjectorProcess -Force -ErrorAction SilentlyContinue
+      [void]$dateTimeInjectorProcess.WaitForExit(15000)
+    }
+  }
+
   $stderrProbe = Invoke-DreamSkinNative -FilePath $node.Path -ArgumentList @(
     '-e', "process.stderr.write('dream-skin-stderr-probe\n'); process.exit(7)")
   if ($stderrProbe.ExitCode -ne 7 -or ($stderrProbe.Output -join "`n") -notmatch 'dream-skin-stderr-probe') {
