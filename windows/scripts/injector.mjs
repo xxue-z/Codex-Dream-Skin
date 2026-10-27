@@ -1713,17 +1713,32 @@ async function waitForVerifiedSession(
   timeoutMs,
   expectedThemeId = null,
   expectedRevision = null,
+  options = {},
 ) {
   const deadline = Date.now() + timeoutMs;
   let lastResult;
   let lastError;
+  let hiddenStreak = 0;
   while (Date.now() < deadline) {
     try {
       lastResult = await verifySession(session, targetId, expectedThemeId, expectedRevision);
       lastError = null;
       if (lastResult.pass) return lastResult;
+      // A hidden document cannot pass until the window is restored. The
+      // --verify probe only needs to classify the session so the caller can
+      // show the restart prompt; waiting the full timeout just makes the
+      // tray feel stuck. --once keeps the full window because the app may
+      // still be painting during launch.
+      if (options.failFastWhenHidden &&
+          (lastResult?.documentHidden === true || lastResult?.result?.documentHidden === true)) {
+        hiddenStreak += 1;
+        if (hiddenStreak >= 2) return lastResult;
+      } else {
+        hiddenStreak = 0;
+      }
     } catch (error) {
       lastError = error;
+      hiddenStreak = 0;
     }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
@@ -1852,6 +1867,7 @@ async function runOneShot(options) {
               options.timeoutMs,
               loadedPayload?.theme.id ?? null,
               loadedPayload?.revision ?? null,
+              { failFastWhenHidden: options.mode === "verify" },
             )
             : await verifySession(session, target.id);
         results.push({ targetId: target.id, markers: probe.markers, result: verified });
