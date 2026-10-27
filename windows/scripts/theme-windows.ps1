@@ -389,12 +389,15 @@ function Set-DreamSkinPlaylistPreference {
   New-Item -ItemType Directory -Force -Path $root | Out-Null
   $path = Get-DreamSkinPlaylistStatePath -StateRoot $root
   $current = Get-DreamSkinPlaylistPreference -StateRoot $root
-  $muted = $current.Muted
-  $paused = $current.Paused
-  $softVeil = $current.SoftVeil
-  if ($null -ne $Muted) { $muted = [bool]$Muted }
-  if ($null -ne $Paused) { $paused = [bool]$Paused }
-  if ($null -ne $SoftVeil) { $softVeil = [bool]$SoftVeil }
+  # PowerShell variable names are case-insensitive. Reusing $muted/$paused/
+  # $softVeil here would overwrite the $Muted/$Paused/$SoftVeil parameters and
+  # silently write the old values back. Keep the merged values in $next*.
+  $nextMuted = $current.Muted
+  $nextPaused = $current.Paused
+  $nextSoftVeil = $current.SoftVeil
+  if ($null -ne $Muted) { $nextMuted = [bool]$Muted }
+  if ($null -ne $Paused) { $nextPaused = [bool]$Paused }
+  if ($null -ne $SoftVeil) { $nextSoftVeil = [bool]$SoftVeil }
   $index = 0
   $positionSeconds = 0.0
   try {
@@ -408,9 +411,9 @@ function Set-DreamSkinPlaylistPreference {
     schemaVersion = 1
     index = $index
     positionSeconds = $positionSeconds
-    muted = $muted
-    paused = $paused
-    softVeil = $softVeil
+    muted = $nextMuted
+    paused = $nextPaused
+    softVeil = $nextSoftVeil
     updatedAt = (Get-Date).ToUniversalTime().ToString('o')
   }
   $json = ($payload | ConvertTo-Json -Depth 4) + "`r`n"
