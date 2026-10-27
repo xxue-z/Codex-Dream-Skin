@@ -1464,6 +1464,40 @@ export async function runRendererRuntimeTest(assetRoot) {
   assert.ok(dynamic.revoked.includes(video.src));
   assert.equal(dynamic.window.__dreamSkinAttachVideo, undefined);
 
+  // Local default-theme playlist scrim: the numeric veil must drive the two
+  // private alpha variables, update on a settings change, and clear on dispose.
+  const playlistFixture = makeFixture({ nativeAppearance: "dark" });
+  vm.runInNewContext(
+    playlistFixture.payloadFor({ videoPlaylist: { enabled: true } }),
+    playlistFixture.context,
+  );
+  const playlistInput = playlistFixture.nodes.get("codex-dream-skin-videos");
+  assert.ok(playlistInput, "renderer must create the hidden playlist input");
+  playlistInput.files = [
+    { name: "one.mp4", size: 10, lastModified: 1 },
+    { name: "two.webm", size: 20, lastModified: 2 },
+  ];
+  const attachedPlaylist = playlistFixture.window.__CODEX_DREAM_SKIN_ATTACH_VIDEOS__({
+    veil: 0, muted: true, paused: false,
+  });
+  assert.equal(attachedPlaylist.ready, true);
+  assert.equal(playlistFixture.root.getAttribute("data-dream-playlist"), "active");
+  assert.equal(playlistFixture.root.style.getPropertyValue("--ds-playlist-bg-alpha"), "0.450");
+  assert.equal(playlistFixture.root.style.getPropertyValue("--ds-playlist-panel-alpha"), "0.720");
+  playlistFixture.window.__dreamSkinSetVideoState({ veil: 100 });
+  assert.equal(playlistFixture.root.style.getPropertyValue("--ds-playlist-bg-alpha"), "0.180");
+  assert.equal(playlistFixture.root.style.getPropertyValue("--ds-playlist-panel-alpha"), "0.550");
+  playlistFixture.window.__dreamSkinSetVideoState({ veil: 50 });
+  assert.equal(playlistFixture.root.style.getPropertyValue("--ds-playlist-bg-alpha"), "0.315");
+  assert.equal(playlistFixture.root.style.getPropertyValue("--ds-playlist-panel-alpha"), "0.635");
+  const playlistReuse = playlistFixture.window.__CODEX_DREAM_SKIN_ATTACH_VIDEOS__({ veil: 100 });
+  assert.equal(playlistReuse.reused, true);
+  assert.equal(playlistFixture.root.style.getPropertyValue("--ds-playlist-bg-alpha"), "0.180");
+  assert.equal(playlistFixture.window.__CODEX_DREAM_SKIN_STATE__.cleanup(), true);
+  assert.equal(playlistFixture.root.getAttribute("data-dream-playlist"), null);
+  assert.equal(playlistFixture.root.style.getPropertyValue("--ds-playlist-bg-alpha"), "");
+  assert.equal(playlistFixture.root.style.getPropertyValue("--ds-playlist-panel-alpha"), "");
+
   const reduced = makeFixture({ nativeAppearance: "dark", reducedMotion: true });
   vm.runInNewContext(reduced.payloadFor(videoTheme, undefined, videoMeta), reduced.context);
   assert.equal((await reduced.window.__dreamSkinAttachVideo("AAAA", videoMeta)).skipped, "reduced-motion");

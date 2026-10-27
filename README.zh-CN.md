@@ -169,7 +169,7 @@ macOS 菜单栏和 Windows 托盘都有「主题库 Gallery」和「在线 Studi
 
 按文件名自然顺序播放（`1`、`2`、`10`），循环硬切，默认静音，重启后从上次位置续播；播不了的文件自动跳过。视频通过磁盘背书的 `blob:` URL 在本机读取：不上传、不新增监听端口、不修改 `app.asar`。
 
-默认主题在托盘/菜单里的子菜单（与“应用/静音/暂停”同级）还提供：更换海报、恢复默认海报、打开视频文件夹、重新扫描视频。覆盖海报放在 `%LOCALAPPDATA%\CodexDreamSkin\poster.jpeg`（Windows）或 `~/Library/Application Support/CodexDreamSkinStudio/poster.jpeg`（macOS），1–2 秒内生效；无效文件会保留上一张可用海报。
+托盘/菜单栏的顶层“视频设置”提供：更换海报、恢复默认海报、打开视频文件夹、重新扫描视频，以及自动发现、1/2/5/10/30 秒检测间隔、自定义视频文件夹和 0–100% 遮罩透明度滑块。覆盖海报放在 `%LOCALAPPDATA%\CodexDreamSkin\poster.jpeg`（Windows）或 `~/Library/Application Support/CodexDreamSkinStudio/poster.jpeg`（macOS），1–2 秒内生效；无效文件会保留上一张可用海报。
 
 这条本机播放列表与官方 Skin API 2 ZIP 契约分离：正式包仍只允许一个 `background.mp4`，`videos/` 仍会被 ZIP 校验器拒绝。
 

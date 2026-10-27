@@ -338,16 +338,11 @@ html[data-dream-skin="active"] [data-ds-video-layer] > video {
    scrim. Text surfaces keep their own panel alpha. */
 html[data-dream-skin="active"][data-dream-playlist="active"] {
   --ds-art-layer-opacity: 1;
-}
-
-html[data-dream-skin="active"][data-dream-playlist="active"][data-dream-playlist-veil="soft"] {
-  --ds-upload-bg-alpha: .18 !important;
-  --ds-upload-panel-alpha: .55 !important;
-}
-
-html[data-dream-skin="active"][data-dream-playlist="active"][data-dream-playlist-veil="strong"] {
-  --ds-upload-bg-alpha: .45 !important;
-  --ds-upload-panel-alpha: .72 !important;
+  /* The local playlist sets these two private variables from the user's
+     scrim transparency. The fallbacks keep the calibrated "soft" anchors when
+     a renderer attaches without a persisted setting. */
+  --ds-upload-bg-alpha: var(--ds-playlist-bg-alpha, .18) !important;
+  --ds-upload-panel-alpha: var(--ds-playlist-panel-alpha, .55) !important;
 }
 
 html[data-dream-skin="active"][data-dream-playlist="active"] [data-ds-video-layer] > video {

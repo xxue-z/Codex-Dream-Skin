@@ -75,9 +75,16 @@ try {
   $notify.Visible = $true
   $menu = [System.Windows.Forms.ContextMenuStrip]::new()
   $notify.ContextMenuStrip = $menu
+  $script:trayVideoSettingsControls = @()
+  $script:trayVeilTimer = $null
+  $script:trayPendingVeil = 100
+  $script:trayCommitVeil = $null
 
   function Show-DreamSkinTrayError {
     param([string]$Message)
+    if ($Message -like '*Video settings file*') {
+      $Message = Get-DreamSkinTrayText -Key 'FolderSettingsInvalid'
+    }
     [void][System.Windows.Forms.MessageBox]::Show(
       $Message,
       'Codex Dream Skin',
@@ -272,24 +279,39 @@ try {
 
   function Set-DreamSkinTrayVideoState {
     param(
-      [Parameter(Mandatory = $true)][bool]$Muted,
-      [Parameter(Mandatory = $true)][bool]$Paused,
-      [bool]$SoftVeil = $true
+      [Nullable[bool]]$Muted = $null,
+      [Nullable[bool]]$Paused = $null,
+      [Nullable[int]]$Veil = $null
     )
+    if ($null -eq $Muted -and $null -eq $Paused -and $null -eq $Veil) { return }
+    if ($null -eq $Veil) {
+      try { $Veil = (Get-DreamSkinVideoSettings -StateRoot $StateRoot).Veil } catch { $Veil = 100 }
+    }
     $node = Get-DreamSkinNodeRuntime
     $injector = Join-Path $PSScriptRoot 'injector.mjs'
-    $result = Invoke-DreamSkinNative -FilePath $node.Path -ArgumentList @(
-      $injector, '--video-state', '--port', "$Port",
-      '--muted', $(if ($Muted) { 'true' } else { 'false' }),
-      '--paused', $(if ($Paused) { 'true' } else { 'false' }),
-      '--soft-veil', $(if ($SoftVeil) { 'true' } else { 'false' })
-    ) -SeparateStderr
+    $arguments = @($injector, '--video-state', '--port', "$Port")
+    if ($null -ne $Muted) {
+      $arguments += @('--muted', $(if ($Muted) { 'true' } else { 'false' }))
+    }
+    if ($null -ne $Paused) {
+      $arguments += @('--paused', $(if ($Paused) { 'true' } else { 'false' }))
+    }
+    if ($null -ne $Veil) { $arguments += @('--veil', "$([int]$Veil)") }
+    $result = Invoke-DreamSkinNative -FilePath $node.Path -ArgumentList $arguments -SeparateStderr
     if ($result.ExitCode -ne 0) {
       $detail = (($result.Output + $result.ErrorOutput) -join "`n").Trim()
       throw $(if ($detail) { $detail } else { 'Could not update the live dynamic background state.' })
     }
   }
   function Rebuild-DreamSkinTrayMenu {
+    # Hosted TrackBar/NSView equivalents are not disposed by Items.Clear();
+    # release the previous controls before rebuilding so repeated menu opens do
+    # not leak native handles.
+    foreach ($control in @($script:trayVideoSettingsControls)) {
+      try { $control.Dispose() } catch {}
+    }
+    $script:trayVideoSettingsControls = @()
+    $script:trayVeilTimer = $null
     $menu.Items.Clear()
     $paused = Test-DreamSkinPaused -StateRoot $StateRoot
     $state = $null
@@ -464,7 +486,7 @@ try {
             $next = -not $current.Muted
             Set-DreamSkinPlaylistPreference -StateRoot $StateRoot -Muted $next
             if ($activeId -ceq $playlistId) {
-              Set-DreamSkinTrayVideoState -Muted $next -Paused $current.Paused -SoftVeil $current.SoftVeil
+              Set-DreamSkinTrayVideoState -Muted $next -Paused $current.Paused
             }
             Rebuild-DreamSkinTrayMenu
           } catch { Show-DreamSkinTrayError -Message $_.Exception.Message }
@@ -478,7 +500,7 @@ try {
             $next = -not $current.Paused
             Set-DreamSkinPlaylistPreference -StateRoot $StateRoot -Paused $next
             if ($activeId -ceq $playlistId) {
-              Set-DreamSkinTrayVideoState -Muted $current.Muted -Paused $next -SoftVeil $current.SoftVeil
+              Set-DreamSkinTrayVideoState -Muted $current.Muted -Paused $next
             }
             Rebuild-DreamSkinTrayMenu
           } catch { Show-DreamSkinTrayError -Message $_.Exception.Message }
@@ -486,58 +508,6 @@ try {
         $null = Add-DreamSkinTrayItem -Items $themeMenu.DropDownItems `
           -Text (Get-DreamSkinTrayText -Key 'VideoPause') -Action $pauseAction `
           -Checked $playlistPreference.Paused
-        $softVeilAction = {
-          try {
-            $current = Get-DreamSkinPlaylistPreference -StateRoot $StateRoot
-            $next = -not $current.SoftVeil
-            Set-DreamSkinPlaylistPreference -StateRoot $StateRoot -SoftVeil $next
-            if ($activeId -ceq $playlistId) {
-              Set-DreamSkinTrayVideoState -Muted $current.Muted -Paused $current.Paused -SoftVeil $next
-            }
-            Rebuild-DreamSkinTrayMenu
-          } catch { Show-DreamSkinTrayError -Message $_.Exception.Message }
-        }.GetNewClosure()
-        $null = Add-DreamSkinTrayItem -Items $themeMenu.DropDownItems `
-          -Text (Get-DreamSkinTrayText -Key 'VideoSoftVeil') -Action $softVeilAction `
-          -Checked $playlistPreference.SoftVeil
-        [void]$themeMenu.DropDownItems.Add([System.Windows.Forms.ToolStripSeparator]::new())
-        $changePosterAction = {
-          try {
-            $dialog = [System.Windows.Forms.OpenFileDialog]::new()
-            $dialog.Title = Get-DreamSkinTrayText -Key 'PlaylistChangePoster'
-            $dialog.Filter = 'JPEG image (*.jpg;*.jpeg)|*.jpg;*.jpeg'
-            $dialog.CheckFileExists = $true
-            $dialog.Multiselect = $false
-            if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
-              Set-DreamSkinPlaylistPoster -SourcePath $dialog.FileName -StateRoot $StateRoot
-              Rebuild-DreamSkinTrayMenu
-            }
-          } catch { Show-DreamSkinTrayError -Message $_.Exception.Message }
-        }.GetNewClosure()
-        $null = Add-DreamSkinTrayItem -Items $themeMenu.DropDownItems `
-          -Text (Get-DreamSkinTrayText -Key 'PlaylistChangePoster') -Action $changePosterAction
-        $restorePosterAction = {
-          try {
-            Restore-DreamSkinPlaylistPoster -StateRoot $StateRoot
-            Rebuild-DreamSkinTrayMenu
-          } catch { Show-DreamSkinTrayError -Message $_.Exception.Message }
-        }.GetNewClosure()
-        $null = Add-DreamSkinTrayItem -Items $themeMenu.DropDownItems `
-          -Text (Get-DreamSkinTrayText -Key 'PlaylistRestorePoster') -Action $restorePosterAction
-        $openVideosAction = {
-          try { Open-DreamSkinVideosFolder -StateRoot $StateRoot }
-          catch { Show-DreamSkinTrayError -Message $_.Exception.Message }
-        }.GetNewClosure()
-        $null = Add-DreamSkinTrayItem -Items $themeMenu.DropDownItems `
-          -Text (Get-DreamSkinTrayText -Key 'PlaylistOpenVideos') -Action $openVideosAction
-        $rescanAction = {
-          try {
-            Request-DreamSkinPlaylistRescan -StateRoot $StateRoot
-            Rebuild-DreamSkinTrayMenu
-          } catch { Show-DreamSkinTrayError -Message $_.Exception.Message }
-        }.GetNewClosure()
-        $null = Add-DreamSkinTrayItem -Items $themeMenu.DropDownItems `
-          -Text (Get-DreamSkinTrayText -Key 'PlaylistRescan') -Action $rescanAction
         [void]$savedMenu.DropDownItems.Add($themeMenu)
       }
       if ($playlistThemeIds.Count -gt 0) {
@@ -604,6 +574,197 @@ try {
     }
     [void]$menu.Items.Add($savedMenu)
 
+    $videoSettings = Get-DreamSkinVideoSettings -StateRoot $StateRoot
+    $videoSettingsItem = [System.Windows.Forms.ToolStripMenuItem]::new(
+      (Get-DreamSkinTrayText -Key 'VideoSettings')
+    )
+    $videoFolderLabel = if ($videoSettings.VideoDirectory) {
+      $videoSettings.VideoDirectory
+    } else {
+      Get-DreamSkinTrayText -Key 'VideoSettingsDefaultFolder'
+    }
+    if ($videoFolderLabel.Length -gt 52) {
+      $videoFolderLabel = '…' + $videoFolderLabel.Substring($videoFolderLabel.Length - 51)
+    }
+    $null = Add-DreamSkinTrayItem -Items $videoSettingsItem.DropDownItems `
+      -Text (Get-DreamSkinTrayText -Key 'VideoSettingsCurrentFolder' -FormatArguments @($videoFolderLabel)) `
+      -Action $null -Enabled $false
+    [void]$videoSettingsItem.DropDownItems.Add([System.Windows.Forms.ToolStripSeparator]::new())
+
+    $autoDiscoverAction = {
+      try {
+        $currentSettings = Get-DreamSkinVideoSettings -StateRoot $StateRoot
+        $null = Set-DreamSkinVideoSettings -StateRoot $StateRoot `
+          -AutoDiscover (-not $currentSettings.AutoDiscover)
+        Request-DreamSkinPlaylistRescan -StateRoot $StateRoot
+        Rebuild-DreamSkinTrayMenu
+      } catch { Show-DreamSkinTrayError -Message $_.Exception.Message }
+    }.GetNewClosure()
+    $null = Add-DreamSkinTrayItem -Items $videoSettingsItem.DropDownItems `
+      -Text (Get-DreamSkinTrayText -Key 'VideoSettingsAutoDiscover') -Action $autoDiscoverAction `
+      -Checked $videoSettings.AutoDiscover
+
+    $intervalMenu = [System.Windows.Forms.ToolStripMenuItem]::new(
+      (Get-DreamSkinTrayText -Key 'VideoSettingsInterval')
+    )
+    foreach ($seconds in @(1, 2, 5, 10, 30)) {
+      $optionSeconds = [int]$seconds
+      $optionAction = {
+        try {
+          $null = Set-DreamSkinVideoSettings -StateRoot $StateRoot `
+            -PollIntervalSeconds $optionSeconds
+          Request-DreamSkinPlaylistRescan -StateRoot $StateRoot
+          Rebuild-DreamSkinTrayMenu
+        } catch { Show-DreamSkinTrayError -Message $_.Exception.Message }
+      }.GetNewClosure()
+      $null = Add-DreamSkinTrayItem -Items $intervalMenu.DropDownItems `
+        -Text (Get-DreamSkinTrayText -Key 'VideoSettingsSeconds' -FormatArguments @($optionSeconds)) `
+        -Action $optionAction -Checked ($videoSettings.PollIntervalSeconds -eq $optionSeconds)
+    }
+    [void]$videoSettingsItem.DropDownItems.Add($intervalMenu)
+
+    $changeFolderAction = {
+      try {
+        $dialog = [System.Windows.Forms.FolderBrowserDialog]::new()
+        $dialog.Description = Get-DreamSkinTrayText -Key 'VideoSettingsChangeFolder'
+        $dialog.ShowNewFolderButton = $true
+        try {
+          if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+            $selected = $dialog.SelectedPath
+            if ($selected.StartsWith('\\') -or $selected.StartsWith('//')) {
+              throw (Get-DreamSkinTrayText -Key 'FolderNetwork')
+            }
+            if (-not (Test-Path -LiteralPath $selected -PathType Container)) {
+              throw (Get-DreamSkinTrayText -Key 'FolderNotFound')
+            }
+            try {
+              $null = Set-DreamSkinVideoSettings -StateRoot $StateRoot `
+                -VideoDirectory $selected
+            } catch {
+              throw (Get-DreamSkinTrayText -Key 'FolderInvalid')
+            }
+            Request-DreamSkinPlaylistRescan -StateRoot $StateRoot
+            Rebuild-DreamSkinTrayMenu
+          }
+        } finally { $dialog.Dispose() }
+      } catch { Show-DreamSkinTrayError -Message $_.Exception.Message }
+    }.GetNewClosure()
+    $null = Add-DreamSkinTrayItem -Items $videoSettingsItem.DropDownItems `
+      -Text (Get-DreamSkinTrayText -Key 'VideoSettingsChangeFolder') -Action $changeFolderAction
+
+    $restoreFolderAction = {
+      try {
+        $null = Set-DreamSkinVideoSettings -StateRoot $StateRoot -ResetVideoDirectory
+        Request-DreamSkinPlaylistRescan -StateRoot $StateRoot
+        Rebuild-DreamSkinTrayMenu
+      } catch { Show-DreamSkinTrayError -Message $_.Exception.Message }
+    }.GetNewClosure()
+    $null = Add-DreamSkinTrayItem -Items $videoSettingsItem.DropDownItems `
+      -Text (Get-DreamSkinTrayText -Key 'VideoSettingsRestoreFolder') -Action $restoreFolderAction `
+      -Enabled ([bool]$videoSettings.VideoDirectory)
+    [void]$videoSettingsItem.DropDownItems.Add([System.Windows.Forms.ToolStripSeparator]::new())
+
+    $veilLabelItem = [System.Windows.Forms.ToolStripMenuItem]::new(
+      (Get-DreamSkinTrayText -Key 'VideoSettingsVeil' -FormatArguments @($videoSettings.Veil))
+    )
+    $veilLabelItem.Enabled = $false
+    [void]$videoSettingsItem.DropDownItems.Add($veilLabelItem)
+    $initialVeil = [Math]::Min(100, [Math]::Max(0, [int]$videoSettings.Veil))
+    $trackBar = [System.Windows.Forms.TrackBar]::new()
+    $trackBar.Minimum = 0
+    $trackBar.Maximum = 100
+    $trackBar.TickFrequency = 10
+    $trackBar.LargeChange = 10
+    $trackBar.SmallChange = 5
+    $trackBar.Value = $initialVeil
+    $trackBar.AutoSize = $false
+    $trackBar.Width = 260
+    $trackBar.Height = 34
+    $trackBar.AccessibleName = Get-DreamSkinTrayText -Key 'VideoSettingsVeil' -FormatArguments @('')
+    $script:trayPendingVeil = $initialVeil
+    $veilTimer = [System.Windows.Forms.Timer]::new()
+    $veilTimer.Interval = 350
+    $script:trayVeilTimer = $veilTimer
+    $script:trayCommitVeil = {
+      try {
+        if ($null -ne $script:trayVeilTimer) { $script:trayVeilTimer.Stop() }
+        $value = [int]$script:trayPendingVeil
+        $null = Set-DreamSkinVideoVeil -Veil $value -StateRoot $StateRoot
+        # Push the new alpha to the live renderer; the watcher also detects the
+        # setting on its next tick, so no playlist rescan is needed here.
+        try { Set-DreamSkinTrayVideoState -Veil $value } catch {}
+      } catch { Show-DreamSkinTrayError -Message $_.Exception.Message }
+    }.GetNewClosure()
+    $veilTimer.add_Tick($script:trayCommitVeil)
+    $trackBar.add_ValueChanged({
+      $script:trayPendingVeil = [Math]::Min(100, [Math]::Max(0, [int]$trackBar.Value))
+      $veilLabelItem.Text = Get-DreamSkinTrayText -Key 'VideoSettingsVeil' `
+        -FormatArguments @($script:trayPendingVeil)
+      if ($null -ne $script:trayVeilTimer) {
+        $script:trayVeilTimer.Stop()
+        $script:trayVeilTimer.Start()
+      }
+    }.GetNewClosure())
+    $hostItem = [System.Windows.Forms.ToolStripControlHost]::new($trackBar)
+    $hostItem.AutoSize = $false
+    $hostItem.Size = [System.Drawing.Size]::new(276, 40)
+    $hostItem.Margin = [System.Windows.Forms.Padding]::new(8, 0, 8, 2)
+    [void]$videoSettingsItem.DropDownItems.Add($hostItem)
+    $script:trayVideoSettingsControls += @($hostItem, $veilTimer)
+    $null = Add-DreamSkinTrayItem -Items $videoSettingsItem.DropDownItems `
+      -Text (Get-DreamSkinTrayText -Key 'VideoSettingsVeilLimits') -Action $null -Enabled $false
+    [void]$videoSettingsItem.DropDownItems.Add([System.Windows.Forms.ToolStripSeparator]::new())
+
+    $changePosterAction = {
+      try {
+        $dialog = [System.Windows.Forms.OpenFileDialog]::new()
+        $dialog.Title = Get-DreamSkinTrayText -Key 'PlaylistChangePoster'
+        $dialog.Filter = 'JPEG image (*.jpg;*.jpeg)|*.jpg;*.jpeg'
+        $dialog.CheckFileExists = $true
+        $dialog.Multiselect = $false
+        try {
+          if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+            Set-DreamSkinPlaylistPoster -SourcePath $dialog.FileName -StateRoot $StateRoot
+            Rebuild-DreamSkinTrayMenu
+          }
+        } finally { $dialog.Dispose() }
+      } catch { Show-DreamSkinTrayError -Message $_.Exception.Message }
+    }.GetNewClosure()
+    $null = Add-DreamSkinTrayItem -Items $videoSettingsItem.DropDownItems `
+      -Text (Get-DreamSkinTrayText -Key 'PlaylistChangePoster') -Action $changePosterAction
+
+    $restorePosterAction = {
+      try {
+        Restore-DreamSkinPlaylistPoster -StateRoot $StateRoot
+        Rebuild-DreamSkinTrayMenu
+      } catch { Show-DreamSkinTrayError -Message $_.Exception.Message }
+    }.GetNewClosure()
+    $null = Add-DreamSkinTrayItem -Items $videoSettingsItem.DropDownItems `
+      -Text (Get-DreamSkinTrayText -Key 'PlaylistRestorePoster') -Action $restorePosterAction
+
+    $openVideosAction = {
+      try { Open-DreamSkinVideosFolder -StateRoot $StateRoot }
+      catch {
+        $message = $_.Exception.Message
+        if ($message -like '*configured videos folder is missing*') {
+          $message = Get-DreamSkinTrayText -Key 'FolderMissing'
+        }
+        Show-DreamSkinTrayError -Message $message
+      }
+    }.GetNewClosure()
+    $null = Add-DreamSkinTrayItem -Items $videoSettingsItem.DropDownItems `
+      -Text (Get-DreamSkinTrayText -Key 'PlaylistOpenVideos') -Action $openVideosAction
+
+    $rescanAction = {
+      try {
+        Request-DreamSkinPlaylistRescan -StateRoot $StateRoot
+        Rebuild-DreamSkinTrayMenu
+      } catch { Show-DreamSkinTrayError -Message $_.Exception.Message }
+    }.GetNewClosure()
+    $null = Add-DreamSkinTrayItem -Items $videoSettingsItem.DropDownItems `
+      -Text (Get-DreamSkinTrayText -Key 'PlaylistRescan') -Action $rescanAction
+    [void]$menu.Items.Add($videoSettingsItem)
+
     $null = Add-DreamSkinTrayItem -Items $menu.Items -Text (Get-DreamSkinTrayText -Key 'OpenThemes') -Action {
       $themeDirectoryToken = ConvertTo-DreamSkinProcessArgument -Value $paths.Saved
       Start-Process -FilePath explorer.exe -ArgumentList $themeDirectoryToken | Out-Null
@@ -647,6 +808,14 @@ try {
   }
 
   $menu.add_Opening({ Rebuild-DreamSkinTrayMenu })
+  $menu.add_Closed({
+    # A slider drag can still be inside its debounce window when the menu
+    # closes; commit it instead of dropping the last value.
+    $timer = $script:trayVeilTimer
+    if ($null -ne $timer -and $timer.Enabled -and $null -ne $script:trayCommitVeil) {
+      & $script:trayCommitVeil
+    }
+  })
   function Start-DreamSkinThemeManager {
     $manager = Join-Path $SkillRoot 'assets\theme-manager\DreamSkin.ThemeManager.exe'
     Assert-DreamSkinRuntimeTree -Path (Split-Path -Parent $manager)

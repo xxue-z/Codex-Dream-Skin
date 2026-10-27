@@ -20,6 +20,7 @@ runtime/*
 !runtime/theme-preferences.mjs
 !runtime/mp4-metadata.mjs
 !runtime/video-playlist.mjs
+!runtime/video-settings.mjs
 !runtime/validate-safe-css-file.mjs
 
 # local agent context

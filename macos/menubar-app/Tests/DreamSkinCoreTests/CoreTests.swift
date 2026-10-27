@@ -302,4 +302,90 @@ final class CoreTests: XCTestCase {
     )
     XCTAssertEqual(try Data(contentsOf: snapshot.appendingPathComponent("theme.json")), Data("old-theme".utf8))
   }
+
+  func testVideoSettingsDefaultsMigrationPersistenceAndCorruption() throws {
+    let fileManager = FileManager.default
+    let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? fileManager.removeItem(at: root) }
+    try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+
+    var value = VideoSettingsStore.load(stateRoot: root)
+    XCTAssertEqual(value.autoDiscover, true)
+    XCTAssertEqual(value.pollIntervalSeconds, 2)
+    XCTAssertNil(value.videoDirectory)
+    XCTAssertEqual(value.veil, 100)
+
+    try Data("{\"schemaVersion\":1,\"softVeil\":false}".utf8)
+      .write(to: root.appendingPathComponent("video-playlist.json"))
+    value = VideoSettingsStore.load(stateRoot: root)
+    XCTAssertEqual(value.veil, 0)
+
+    var settings = value
+    settings.autoDiscover = false
+    settings.pollIntervalSeconds = 30
+    settings.veil = 42
+    try VideoSettingsStore.save(settings, stateRoot: root)
+    let loaded = VideoSettingsStore.load(stateRoot: root)
+    XCTAssertEqual(loaded.autoDiscover, false)
+    XCTAssertEqual(loaded.pollIntervalSeconds, 30)
+    XCTAssertEqual(loaded.veil, 42)
+    XCTAssertFalse(loaded.updatedAt.isEmpty)
+
+    let attributes = try fileManager.attributesOfItem(
+      atPath: VideoSettingsStore.fileURL(stateRoot: root).path
+    )
+    XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
+
+    // Corrupt files fall back to defaults; the injector keeps playing.
+    try Data("{".utf8).write(to: VideoSettingsStore.fileURL(stateRoot: root))
+    XCTAssertEqual(VideoSettingsStore.load(stateRoot: root).pollIntervalSeconds, 2)
+  }
+
+  func testVideoSettingsNormalizesIntervalVeilAndDirectory() {
+    let clamped = VideoSettings.normalized(VideoSettings(
+      schemaVersion: 9,
+      autoDiscover: true,
+      pollIntervalSeconds: 7,
+      videoDirectory: "relative/path",
+      veil: 150,
+      updatedAt: String(repeating: "x", count: 80)
+    ))
+    XCTAssertEqual(clamped.schemaVersion, 1)
+    XCTAssertEqual(clamped.pollIntervalSeconds, 2)
+    XCTAssertNil(clamped.videoDirectory)
+    XCTAssertEqual(clamped.veil, 100)
+    XCTAssertEqual(clamped.updatedAt.count, 40)
+
+    XCTAssertNil(VideoSettings.normalized(VideoSettings(videoDirectory: "//server/share")).videoDirectory)
+    XCTAssertEqual(
+      VideoSettings.normalized(VideoSettings(videoDirectory: "/Volumes/Videos")).videoDirectory,
+      "/Volumes/Videos"
+    )
+    XCTAssertEqual(VideoSettings.normalized(VideoSettings(veil: -5)).veil, 0)
+  }
+
+  func testVideoSettingsRejectsMissingAndLinkedDirectories() throws {
+    let fileManager = FileManager.default
+    let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? fileManager.removeItem(at: root) }
+    let real = root.appendingPathComponent("real", isDirectory: true)
+    try fileManager.createDirectory(at: real, withIntermediateDirectories: true)
+
+    XCTAssertEqual(
+      try VideoSettingsStore.validateDirectory(real).standardizedFileURL,
+      real.standardizedFileURL
+    )
+
+    let link = root.appendingPathComponent("link", isDirectory: true)
+    try fileManager.createSymbolicLink(at: link, withDestinationURL: real)
+    XCTAssertThrowsError(try VideoSettingsStore.validateDirectory(link)) { error in
+      XCTAssertEqual(error as? VideoSettingsError, .symlink)
+    }
+
+    XCTAssertThrowsError(
+      try VideoSettingsStore.validateDirectory(root.appendingPathComponent("missing"))
+    ) { error in
+      XCTAssertEqual(error as? VideoSettingsError, .notDirectory)
+    }
+  }
 }

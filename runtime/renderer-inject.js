@@ -1049,6 +1049,30 @@
     layer.style.borderRadius = mode === "home" ? "inherit" : "0";
     layer.setAttribute("data-ds-video-mount", mode);
   };
+  // The local playlist exposes a continuous scrim transparency. 0 keeps the
+  // calibrated "strong" anchors (.45/.72) and 100 the "soft" anchors
+  // (.18/.55); the CSS consumes these private variables with !important.
+  const playlistVeilAlphas = (value) => {
+    const numeric = Number(value);
+    const veil = Number.isFinite(numeric)
+      ? Math.min(100, Math.max(0, Math.round(numeric))) : 100;
+    return {
+      background: (0.45 - 0.0027 * veil).toFixed(3),
+      panel: (0.72 - 0.0017 * veil).toFixed(3),
+    };
+  };
+  const applyPlaylistVeil = (value) => {
+    const root = document.documentElement;
+    if (!root?.style?.setProperty) return;
+    const alphas = playlistVeilAlphas(value);
+    root.style.setProperty("--ds-playlist-bg-alpha", alphas.background);
+    root.style.setProperty("--ds-playlist-panel-alpha", alphas.panel);
+  };
+  const clearPlaylistVeil = () => {
+    const root = document.documentElement;
+    root?.style?.removeProperty?.("--ds-playlist-bg-alpha");
+    root?.style?.removeProperty?.("--ds-playlist-panel-alpha");
+  };
   const setVideoReadyAttribute = (ready) => {
     const root = document.documentElement;
     if (!root) return;
@@ -1134,7 +1158,7 @@
       }
       const root = document.documentElement;
       root?.removeAttribute("data-dream-playlist");
-      root?.removeAttribute("data-dream-playlist-veil");
+      clearPlaylistVeil();
       delete window.__dreamSkinVideoProgress;
     }
     videoState = null;
@@ -1317,11 +1341,9 @@
     } else if (typeof state?.muted === "boolean" && !videoState.userPaused) {
       syncVideoPlayback();
     }
-    if (typeof state?.softVeil === "boolean" && videoState.playlist) {
-      videoState.playlist.softVeil = state.softVeil;
-      document.documentElement?.setAttribute(
-        "data-dream-playlist-veil", state.softVeil ? "soft" : "strong",
-      );
+    if (typeof state?.veil === "number" && videoState.playlist) {
+      videoState.playlist.veil = state.veil;
+      applyPlaylistVeil(state.veil);
     }
     return {
       video: true,
@@ -1434,10 +1456,9 @@
     if (videoState?.playlist && videoState.playlist.signature === signature) {
       if (typeof state?.muted === "boolean") setVideoStateEntry({ muted: state.muted });
       if (typeof state?.paused === "boolean") setVideoStateEntry({ paused: state.paused });
-      if (typeof state?.softVeil === "boolean") {
-        document.documentElement?.setAttribute(
-          "data-dream-playlist-veil", state.softVeil ? "soft" : "strong",
-        );
+      if (typeof state?.veil === "number") {
+        videoState.playlist.veil = state.veil;
+        applyPlaylistVeil(state.veil);
       }
       return { reused: true, count: files.length, index: videoState.playlist.index };
     }
@@ -1457,7 +1478,7 @@
     }
     const muted = state?.muted !== false;
     const userPaused = state?.paused === true;
-    const softVeil = state?.softVeil !== false;
+    const veil = typeof state?.veil === "number" ? state.veil : 100;
     let index = Number.isSafeInteger(state?.index) ? state.index : 0;
     index = Math.min(entries.length - 1, Math.max(0, index));
     const element = document.createElement("video");
@@ -1495,7 +1516,7 @@
         entries,
         index,
         signature,
-        softVeil,
+        veil,
         pendingPosition: Number(state?.positionSeconds) || 0,
         positionSeconds: Number(state?.positionSeconds) || 0,
         lastReportAt: 0,
@@ -1503,7 +1524,7 @@
     };
     const root = document.documentElement;
     root?.setAttribute("data-dream-playlist", "active");
-    root?.setAttribute("data-dream-playlist-veil", softVeil ? "soft" : "strong");
+    applyPlaylistVeil(veil);
     element.addEventListener("playing", () => {
       if (videoState?.element === element) {
         videoState.ready = true;

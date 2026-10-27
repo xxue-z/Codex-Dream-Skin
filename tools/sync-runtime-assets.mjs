@@ -149,6 +149,10 @@ const sourceVideoPlaylist = await fs.readFile(
   path.join(projectRoot, "runtime", "video-playlist.mjs"),
   "utf8",
 );
+const sourceVideoSettings = await fs.readFile(
+  path.join(projectRoot, "runtime", "video-settings.mjs"),
+  "utf8",
+);
 const outputs = [
   {
     content: await fs.readFile(path.join(projectRoot, "runtime", "theme-preferences.mjs"), "utf8"),
@@ -216,6 +220,10 @@ const outputs = [
   {
     content: sourceVideoPlaylist,
     paths: ["macos/assets/video-playlist.mjs", "windows/assets/video-playlist.mjs"],
+  },
+  {
+    content: sourceVideoSettings,
+    paths: ["macos/assets/video-settings.mjs", "windows/assets/video-settings.mjs"],
   },
   {
     content: compileWindowsImageMetadata(sourceImageMetadata),

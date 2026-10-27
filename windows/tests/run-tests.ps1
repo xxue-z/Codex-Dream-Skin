@@ -1165,7 +1165,7 @@ try {
   foreach ($releaseAsset in @(
     'dream-skin.css', 'renderer-inject.js', 'safe-css-policy.json', 'safe-css-validator.mjs', 'selectors.json',
     'theme-package-validator.mjs', 'mp4-metadata.mjs', 'theme-preferences.mjs',
-    'video-playlist.mjs'
+    'video-playlist.mjs', 'video-settings.mjs'
   )) {
     Copy-Item -LiteralPath (Join-Path $Root "assets\$releaseAsset") `
       -Destination $releaseFixtureAssets -Force
@@ -1533,6 +1533,7 @@ try {
   & (Join-Path $PSScriptRoot 'native-stderr.tests.ps1') -Root $Root
   & (Join-Path $PSScriptRoot 'theme-zip-import.tests.ps1') -Root $Root
   & (Join-Path $PSScriptRoot 'theme-video-preferences.tests.ps1') -Root $Root
+  & (Join-Path $PSScriptRoot 'video-settings.tests.ps1') -Root $Root
   & (Join-Path $PSScriptRoot 'config-startup-rollback.tests.ps1') -Root $Root
   & (Join-Path $PSScriptRoot 'start-result-contract.tests.ps1') -Root $Root
   & (Join-Path $PSScriptRoot 'tray-apply-result.tests.ps1')
