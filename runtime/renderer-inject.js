@@ -1120,7 +1120,7 @@
   };
   const disposeVideo = () => {
     if (!videoState) return;
-    const { layer, element, url } = videoState;
+    const { layer, element, url, playlist } = videoState;
     pauseVideo();
     try {
       element?.removeAttribute?.("src");
@@ -1128,6 +1128,15 @@
     } catch {}
     layer?.remove?.();
     if (url) URL.revokeObjectURL(url);
+    if (playlist) {
+      for (const entry of playlist.entries || []) {
+        if (entry?.url) URL.revokeObjectURL(entry.url);
+      }
+      const root = document.documentElement;
+      root?.removeAttribute("data-dream-playlist");
+      root?.removeAttribute("data-dream-playlist-veil");
+      delete window.__dreamSkinVideoProgress;
+    }
     videoState = null;
     if (window.__dreamSkinVideoKey) delete window.__dreamSkinVideoKey;
     setVideoReadyAttribute(false);
@@ -1158,6 +1167,10 @@
     if (window.__dreamSkinSetVideoState === setVideoStateEntry) {
       delete window.__dreamSkinSetVideoState;
     }
+    if (window.__CODEX_DREAM_SKIN_ATTACH_VIDEOS__ === attachPlaylistEntry) {
+      delete window.__CODEX_DREAM_SKIN_ATTACH_VIDEOS__;
+    }
+    document.getElementById?.(PLAYLIST_INPUT_ID)?.remove?.();
   };
   const setupVideoListeners = () => {
     if (!videoVisibilityHandler && typeof document.addEventListener === "function") {
@@ -1304,11 +1317,19 @@
     } else if (typeof state?.muted === "boolean" && !videoState.userPaused) {
       syncVideoPlayback();
     }
+    if (typeof state?.softVeil === "boolean" && videoState.playlist) {
+      videoState.playlist.softVeil = state.softVeil;
+      document.documentElement?.setAttribute(
+        "data-dream-playlist-veil", state.softVeil ? "soft" : "strong",
+      );
+    }
     return {
       video: true,
       muted: videoState.muted,
       paused: videoState.userPaused,
       ready: videoState.ready,
+      playlist: Boolean(videoState.playlist),
+      index: videoState.playlist?.index ?? null,
     };
   };
   window.__dreamSkinSetVideoState = setVideoStateEntry;
@@ -1318,12 +1339,223 @@
     return attachVideo(base64, meta);
   };
   window.__dreamSkinAttachVideo = attachVideoEntry;
+
+  // Local default-theme playlist. The injector fills a hidden file input via
+  // CDP DOM.setFileInputFiles; every entry is a disk-backed File, so creating
+  // object URLs does not read the video into memory.
+  const PLAYLIST_INPUT_ID = "codex-dream-skin-videos";
+  const ensurePlaylistInput = () => {
+    let input = document.getElementById?.(PLAYLIST_INPUT_ID);
+    if (input) return input;
+    const root = document.documentElement || document.body;
+    if (!root || typeof document.createElement !== "function") return null;
+    input = document.createElement("input");
+    input.type = "file";
+    input.id = PLAYLIST_INPUT_ID;
+    input.multiple = true;
+    input.accept = ".mp4,.webm,video/mp4,video/webm";
+    input.setAttribute("aria-hidden", "true");
+    input.tabIndex = -1;
+    input.style.display = "none";
+    root.appendChild(input);
+    return input;
+  };
+
+  const playlistSignature = (files) => files.map((file) =>
+    `${String(file.name || "")}:${Number(file.size) || 0}:${Number(file.lastModified) || 0}`).join("|");
+
+  const reportPlaylistProgress = (force) => {
+    const playlist = videoState?.playlist;
+    if (!playlist || !videoState?.element) return;
+    const nowMs = Date.now();
+    if (!force && nowMs - (playlist.lastReportAt || 0) < 1000) return;
+    playlist.lastReportAt = nowMs;
+    playlist.positionSeconds = Number(videoState.element.currentTime) || 0;
+    window.__dreamSkinVideoProgress = {
+      index: playlist.index,
+      positionSeconds: playlist.positionSeconds,
+      count: playlist.entries.length,
+      updatedAt: new Date(nowMs).toISOString(),
+    };
+  };
+
+  const findPlayable = (playlist, start) => {
+    for (let offset = 0; offset < playlist.entries.length; offset += 1) {
+      const index = (start + offset) % playlist.entries.length;
+      if (playlist.entries[index]?.url && !playlist.entries[index].bad) return index;
+    }
+    return -1;
+  };
+
+  const playPlaylistEntry = (index, position) => {
+    const playlist = videoState?.playlist;
+    if (!playlist) return;
+    const next = findPlayable(playlist, index);
+    if (next < 0) {
+      setVideoReadyAttribute(false);
+      return;
+    }
+    playlist.index = next;
+    playlist.pendingPosition = Number(position) || 0;
+    const entry = playlist.entries[next];
+    const element = videoState.element;
+    const onLoaded = () => {
+      element.removeEventListener("loadedmetadata", onLoaded);
+      if (!videoState?.playlist || videoState.element !== element) return;
+      const wanted = Number(playlist.pendingPosition) || 0;
+      if (wanted > 0 && Number.isFinite(element.duration) &&
+          wanted < element.duration - 0.25) {
+        try { element.currentTime = wanted; } catch {}
+      }
+      videoState.ready = true;
+      syncVideoMount();
+    };
+    element.addEventListener("loadedmetadata", onLoaded);
+    element.loop = false;
+    element.src = entry.url;
+    try { element.load?.(); } catch {}
+  };
+
+  const attachPlaylist = (state) => {
+    const current = window[STATE_KEY];
+    if (current?.installToken !== installToken) return { stale: true };
+    if (reducedMotion()) return { skipped: "reduced-motion" };
+    const input = ensurePlaylistInput();
+    if (!input) return { rejected: "input" };
+    const files = [...(input.files || [])].filter((file) => {
+      const name = String(file?.name || "").toLowerCase();
+      return name.endsWith(".mp4") || name.endsWith(".webm");
+    });
+    if (!files.length) {
+      disposeVideo();
+      return { empty: true };
+    }
+    const signature = playlistSignature(files);
+    if (videoState?.playlist && videoState.playlist.signature === signature) {
+      if (typeof state?.muted === "boolean") setVideoStateEntry({ muted: state.muted });
+      if (typeof state?.paused === "boolean") setVideoStateEntry({ paused: state.paused });
+      if (typeof state?.softVeil === "boolean") {
+        document.documentElement?.setAttribute(
+          "data-dream-playlist-veil", state.softVeil ? "soft" : "strong",
+        );
+      }
+      return { reused: true, count: files.length, index: videoState.playlist.index };
+    }
+    disposeVideo();
+    const entries = files.map((file) => ({
+      file,
+      name: String(file.name || "video"),
+      url: null,
+      bad: false,
+    }));
+    for (const entry of entries) {
+      try { entry.url = URL.createObjectURL(entry.file); } catch { entry.bad = true; }
+    }
+    if (!entries.some((entry) => entry.url && !entry.bad)) {
+      disposeVideo();
+      return { empty: true };
+    }
+    const muted = state?.muted !== false;
+    const userPaused = state?.paused === true;
+    const softVeil = state?.softVeil !== false;
+    let index = Number.isSafeInteger(state?.index) ? state.index : 0;
+    index = Math.min(entries.length - 1, Math.max(0, index));
+    const element = document.createElement("video");
+    element.muted = muted;
+    element.defaultMuted = muted;
+    element.volume = muted ? 0 : 1;
+    element.loop = false;
+    element.autoplay = false;
+    element.playsInline = true;
+    if (muted) element.setAttribute("muted", "");
+    element.setAttribute("playsinline", "");
+    element.setAttribute("disablepictureinpicture", "");
+    element.setAttribute("disableremoteplayback", "");
+    element.setAttribute("aria-hidden", "true");
+    element.tabIndex = -1;
+    element.style.width = "100%";
+    element.style.height = "100%";
+    element.style.objectFit = "cover";
+    element.style.objectPosition = "var(--ds-art-position)";
+    element.style.opacity = "var(--ds-art-layer-opacity, .78)";
+    const layer = document.createElement("div");
+    layer.setAttribute("data-ds-video-layer", "");
+    layer.setAttribute("aria-hidden", "true");
+    layer.appendChild(element);
+    videoState = {
+      key: "playlist",
+      layer,
+      element,
+      url: null,
+      ready: false,
+      mount: null,
+      muted,
+      userPaused,
+      playlist: {
+        entries,
+        index,
+        signature,
+        softVeil,
+        pendingPosition: Number(state?.positionSeconds) || 0,
+        positionSeconds: Number(state?.positionSeconds) || 0,
+        lastReportAt: 0,
+      },
+    };
+    const root = document.documentElement;
+    root?.setAttribute("data-dream-playlist", "active");
+    root?.setAttribute("data-dream-playlist-veil", softVeil ? "soft" : "strong");
+    element.addEventListener("playing", () => {
+      if (videoState?.element === element) {
+        videoState.ready = true;
+        setVideoReadyAttribute(true);
+      }
+    });
+    element.addEventListener("ended", () => {
+      const playlist = videoState?.playlist;
+      if (!playlist) return;
+      reportPlaylistProgress(true);
+      playPlaylistEntry((playlist.index + 1) % playlist.entries.length, 0);
+    });
+    element.addEventListener("error", () => {
+      const playlist = videoState?.playlist;
+      if (!playlist) return;
+      const entry = playlist.entries[playlist.index];
+      if (entry) entry.bad = true;
+      const next = findPlayable(playlist, playlist.index + 1);
+      if (next < 0) {
+        setVideoReadyAttribute(false);
+        return;
+      }
+      playPlaylistEntry(next, 0);
+    });
+    element.addEventListener("timeupdate", () => reportPlaylistProgress(false));
+    element.addEventListener("pause", () => reportPlaylistProgress(true));
+    setupVideoListeners();
+    syncVideoMount();
+    playPlaylistEntry(index, videoState.playlist.pendingPosition);
+    return { ready: true, count: entries.length, index };
+  };
+
+  const attachPlaylistEntry = (state) => {
+    const current = window[STATE_KEY];
+    if (current?.installToken !== installToken) return { stale: true };
+    try {
+      return attachPlaylist(state);
+    } catch (error) {
+      return { rejected: String(error?.message || "playlist") };
+    }
+  };
+  window.__CODEX_DREAM_SKIN_ATTACH_VIDEOS__ = attachPlaylistEntry;
+
   const ensure = ({ root: rootPass = true, scope: scopePass = false, parts: partPass = false } = {}) => {
     if (window[DISABLED_KEY]) return;
     const root = document.documentElement;
     if (!root) return;
     metrics.ensureCalls += 1;
-    if (rootPass) applyRootState(root);
+    if (rootPass) {
+      applyRootState(root);
+      ensurePlaylistInput();
+    }
     if (partPass) {
       refreshParts();
       refreshPredicates();

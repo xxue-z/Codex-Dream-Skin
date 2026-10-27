@@ -71,6 +71,13 @@ public struct DreamSkinCopy: Sendable {
     case loginAtStartup
     case quit
     case changeBackground
+    case videoMute
+    case videoPause
+    case videoSoftVeil
+    case changePoster
+    case restoreDefaultPoster
+    case openVideosFolder
+    case rescanVideos
     case importZip
     case savedThemes
     case noSavedThemes
@@ -216,6 +223,13 @@ public struct DreamSkinCopy: Sendable {
     case .loginAtStartup: return chinese ? "登录时启动" : "Launch at login"
     case .quit: return chinese ? "退出" : "Quit"
     case .changeBackground: return chinese ? "换一张背景图…" : "Choose background image…"
+    case .videoMute: return chinese ? "静音" : "Mute"
+    case .videoPause: return chinese ? "暂停" : "Pause"
+    case .videoSoftVeil: return chinese ? "降低遮罩" : "Reduce scrim"
+    case .changePoster: return chinese ? "更换海报…" : "Change poster…"
+    case .restoreDefaultPoster: return chinese ? "恢复默认海报" : "Restore default poster"
+    case .openVideosFolder: return chinese ? "打开视频文件夹" : "Open videos folder"
+    case .rescanVideos: return chinese ? "重新扫描视频" : "Rescan videos"
     case .importZip: return chinese ? "导入主题 ZIP…" : "Import theme ZIP…"
     case .savedThemes: return chinese ? "已保存的主题" : "Saved themes"
     case .noSavedThemes: return chinese ? "还没有保存的主题" : "No saved themes yet"
