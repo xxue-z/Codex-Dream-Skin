@@ -45,6 +45,7 @@ test("both injectors expose the default-theme playlist in payload checks", async
     assert.deepEqual(loaded.playlist.scan.entries.map((entry) => entry.name),
       ["1.mp4", "2.webm", "10.mp4"], name);
     assert.equal(loaded.posterOverride, false, name);
+    assert.notEqual(loaded.playlistDirStamp, "none", name);
   }
 });
 
@@ -79,4 +80,5 @@ test("non-playlist themes ignore the local video folder", async () => {
   });
   assert.equal(loaded.playlist, null);
   assert.equal(loaded.theme.videoPlaylist, undefined);
+  assert.equal(loaded.playlistDirStamp, "none");
 });
