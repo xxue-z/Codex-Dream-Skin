@@ -42,6 +42,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
   private lazy var communityHTTP = BoundedCommunityHTTPClient(
     userAgent: "CodexDreamSkin/\(appVersion)"
   )
+  private let playlistThemeID = "preset-gothic-void-crusade"
+
   private let requiredEngineRelativePaths = [
     "VERSION",
     "assets/dream-skin.css",
@@ -339,7 +341,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
 
     menu.addItem(.separator())
     addThemeMenu(enabled: !busy)
-    addVideoSettingsMenu(enabled: !busy)
+    addDynamicThemesMenu(enabled: !busy)
     addLinksMenu()
 
     menu.addItem(.separator())
@@ -369,11 +371,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
     menu.addItem(root)
   }
 
-  private func addVideoSettingsMenu(enabled: Bool) {
+  private func addDynamicThemesMenu(enabled: Bool) {
     let settings = VideoSettingsStore.load(stateRoot: stateRootURL)
-    let root = NSMenuItem(title: copy.text(.videoSettings), action: nil, keyEquivalent: "")
-    let submenu = NSMenu(title: copy.text(.videoSettings))
+    let active = DynamicThemeResolver.resolve(
+      stateRoot: stateRootURL,
+      themeID: snapshot.themeID,
+      playlistThemeID: playlistThemeID
+    )
+    let root = NSMenuItem(title: copy.text(.dynamicThemes), action: nil, keyEquivalent: "")
+    let submenu = NSMenu(title: copy.text(.dynamicThemes))
     submenu.autoenablesItems = false
+    if let active {
+      addDisabledItem(copy.format(.dynamicThemesActive, active.name), to: submenu)
+    } else {
+      addDisabledItem(copy.text(.dynamicThemesInactive), to: submenu)
+    }
+    let activePreference = activeDynamicPreference(active)
+    let muteItem = addActionItem(copy.text(.videoMute),
+                                 action: #selector(toggleActiveVideoMute(_:)),
+                                 enabled: enabled && active != nil, to: submenu)
+    muteItem.state = activePreference.muted ? .on : .off
+    let pauseItem = addActionItem(copy.text(.videoPause),
+                                  action: #selector(toggleActiveVideoPause(_:)),
+                                  enabled: enabled && active != nil, to: submenu)
+    pauseItem.state = activePreference.paused ? .on : .off
+    submenu.addItem(.separator())
+
     let folderLabel = settings.videoDirectory.map { shortenMenuPath($0) }
       ?? copy.text(.videoSettingsDefaultFolder)
     addDisabledItem(copy.format(.videoSettingsCurrentFolder, folderLabel), to: submenu)
@@ -642,16 +665,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
           )
           applyItem.representedObject = theme.id
           if theme.id == snapshot.themeID { applyItem.state = .on }
-          themeMenu.addItem(.separator())
-          let playlist = PlaylistPreferencesStore.load(stateRoot: stateRootURL)
-          let muteItem = addActionItem(copy.text(.videoMute),
-                                       action: #selector(togglePlaylistMute(_:)),
-                                       enabled: enabled, to: themeMenu)
-          muteItem.state = playlist.muted ? .on : .off
-          let pauseItem = addActionItem(copy.text(.videoPause),
-                                        action: #selector(togglePlaylistPause(_:)),
-                                        enabled: enabled, to: themeMenu)
-          pauseItem.state = playlist.paused ? .on : .off
           themeRoot.submenu = themeMenu
           submenu.addItem(themeRoot)
           continue
@@ -789,7 +802,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
         return nil
       }
       let rawName = value["name"] as? String ?? id
-      let playlistEnabled = id == "preset-gothic-void-crusade"
+      let playlistEnabled = id == playlistThemeID
       return SavedThemeOption(id: id, name: cleanMenuText(rawName), playlistEnabled: playlistEnabled)
     }
     let deduplicated = deduplicatedSavedThemes(options, currentThemeID: snapshot.themeID).sorted {
@@ -867,14 +880,63 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
     )
   }
 
-  @objc private func togglePlaylistMute(_ sender: NSMenuItem) {
-    let next = !PlaylistPreferencesStore.load(stateRoot: stateRootURL).muted
-    runPlaylistScript(arguments: ["set", "muted", next ? "true" : "false"])
+  private func activeDynamicPreference(_ active: ActiveDynamicTheme?) -> (muted: Bool, paused: Bool) {
+    guard let active else { return (muted: true, paused: false) }
+    switch active.mode {
+    case .playlist:
+      let value = PlaylistPreferencesStore.load(stateRoot: stateRootURL)
+      return (muted: value.muted, paused: value.paused)
+    case .video:
+      return ThemeVideoPreferencesStore.load(themeID: active.id, stateRoot: stateRootURL)
+    }
   }
 
-  @objc private func togglePlaylistPause(_ sender: NSMenuItem) {
-    let next = !PlaylistPreferencesStore.load(stateRoot: stateRootURL).paused
-    runPlaylistScript(arguments: ["set", "paused", next ? "true" : "false"])
+  @objc private func toggleActiveVideoMute(_ sender: NSMenuItem) {
+    guard let active = DynamicThemeResolver.resolve(
+      stateRoot: stateRootURL,
+      themeID: snapshot.themeID,
+      playlistThemeID: playlistThemeID
+    ) else { return }
+    let preference = activeDynamicPreference(active)
+    let next = !preference.muted
+    switch active.mode {
+    case .playlist:
+      runPlaylistScript(arguments: ["set", "muted", next ? "true" : "false"])
+    case .video:
+      do {
+        try ThemeVideoPreferencesStore.set(themeID: active.id, stateRoot: stateRootURL, muted: next)
+      } catch {
+        showVideoSettingsError(error)
+        return
+      }
+      runPlaylistScript(arguments: [
+        "video-state", next ? "true" : "false", preference.paused ? "true" : "false",
+      ])
+    }
+  }
+
+  @objc private func toggleActiveVideoPause(_ sender: NSMenuItem) {
+    guard let active = DynamicThemeResolver.resolve(
+      stateRoot: stateRootURL,
+      themeID: snapshot.themeID,
+      playlistThemeID: playlistThemeID
+    ) else { return }
+    let preference = activeDynamicPreference(active)
+    let next = !preference.paused
+    switch active.mode {
+    case .playlist:
+      runPlaylistScript(arguments: ["set", "paused", next ? "true" : "false"])
+    case .video:
+      do {
+        try ThemeVideoPreferencesStore.set(themeID: active.id, stateRoot: stateRootURL, paused: next)
+      } catch {
+        showVideoSettingsError(error)
+        return
+      }
+      runPlaylistScript(arguments: [
+        "video-state", preference.muted ? "true" : "false", next ? "true" : "false",
+      ])
+    }
   }
 
   @objc private func toggleVideoAutoDiscover(_ sender: NSMenuItem) {
@@ -900,10 +962,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
 
   private func showVideoSettingsError(_ error: Error) {
     if let typed = error as? VideoSettingsError, typed == .invalidSettings {
-      showError(title: copy.text(.videoSettings), message: copy.text(.folderSettingsInvalid))
+      showError(title: copy.text(.dynamicThemes), message: copy.text(.folderSettingsInvalid))
       return
     }
-    showError(title: copy.text(.videoSettings), message: error.localizedDescription)
+    showError(title: copy.text(.dynamicThemes), message: error.localizedDescription)
   }
 
   @objc private func chooseVideoFolder() {
@@ -922,11 +984,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
       settings.videoDirectory = validated.path
       saveVideoSettings(settings)
     } catch VideoSettingsError.networkPath {
-      showError(title: copy.text(.videoSettings), message: copy.text(.folderNetwork))
+      showError(title: copy.text(.dynamicThemes), message: copy.text(.folderNetwork))
     } catch VideoSettingsError.symlink {
-      showError(title: copy.text(.videoSettings), message: copy.text(.folderInvalid))
+      showError(title: copy.text(.dynamicThemes), message: copy.text(.folderInvalid))
     } catch {
-      showError(title: copy.text(.videoSettings), message: copy.text(.folderNotFound))
+      showError(title: copy.text(.dynamicThemes), message: copy.text(.folderNotFound))
     }
   }
 

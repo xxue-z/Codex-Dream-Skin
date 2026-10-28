@@ -388,4 +388,57 @@ final class CoreTests: XCTestCase {
       XCTAssertEqual(error as? VideoSettingsError, .notDirectory)
     }
   }
+
+  func testDynamicThemeResolverAndPerThemeVideoPreferences() throws {
+    let fileManager = FileManager.default
+    let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? fileManager.removeItem(at: root) }
+    let themeDir = root.appendingPathComponent("theme", isDirectory: true)
+    try fileManager.createDirectory(at: themeDir, withIntermediateDirectories: true)
+    func writeTheme(_ object: [String: Any]) throws {
+      let data = try JSONSerialization.data(withJSONObject: object)
+      try data.write(to: themeDir.appendingPathComponent("theme.json"), options: .atomic)
+    }
+
+    try writeTheme(["id": "preset-gothic-void-crusade", "name": "Gothic"])
+    let playlist = try XCTUnwrap(DynamicThemeResolver.resolve(
+      stateRoot: root,
+      themeID: "preset-gothic-void-crusade",
+      playlistThemeID: "preset-gothic-void-crusade"
+    ))
+    XCTAssertEqual(playlist.mode, .playlist)
+    XCTAssertEqual(playlist.name, "Gothic")
+
+    try writeTheme(["id": "studio.video", "name": "Video", "video": ["file": "background.mp4"]])
+    let video = try XCTUnwrap(DynamicThemeResolver.resolve(
+      stateRoot: root,
+      themeID: "studio.video",
+      playlistThemeID: "preset-gothic-void-crusade"
+    ))
+    XCTAssertEqual(video.mode, .video)
+    XCTAssertEqual(video.id, "studio.video")
+
+    try writeTheme(["id": "static", "name": "Static"])
+    XCTAssertNil(DynamicThemeResolver.resolve(
+      stateRoot: root,
+      themeID: "static",
+      playlistThemeID: "preset-gothic-void-crusade"
+    ))
+
+    XCTAssertEqual(ThemeVideoPreferencesStore.load(themeID: "studio.video", stateRoot: root).muted, true)
+    XCTAssertEqual(ThemeVideoPreferencesStore.load(themeID: "studio.video", stateRoot: root).paused, false)
+    try ThemeVideoPreferencesStore.set(themeID: "studio.video", stateRoot: root, muted: false)
+    try ThemeVideoPreferencesStore.set(themeID: "studio.video", stateRoot: root, paused: true)
+    let preferences = ThemeVideoPreferencesStore.load(themeID: "studio.video", stateRoot: root)
+    XCTAssertEqual(preferences.muted, false)
+    XCTAssertEqual(preferences.paused, true)
+    XCTAssertEqual(ThemeVideoPreferencesStore.load(themeID: "other", stateRoot: root).muted, true)
+
+    try Data("{".utf8).write(to: ThemeVideoPreferencesStore.fileURL(stateRoot: root))
+    XCTAssertThrowsError(
+      try ThemeVideoPreferencesStore.set(themeID: "studio.video", stateRoot: root, muted: true)
+    ) { error in
+      XCTAssertEqual(error as? VideoSettingsError, .invalidSettings)
+    }
+  }
 }

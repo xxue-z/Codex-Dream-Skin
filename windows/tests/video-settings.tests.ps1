@@ -88,7 +88,57 @@ try {
     throw 'Corrupt video settings did not fall back to defaults.'
   }
 
-  Write-Output 'PASS: video settings defaults, migration, validation, atomic persistence and corrupt-file protection.'
+  # Active dynamic theme resolution: playlist themes use video-playlist.json,
+  # Skin API 2 themes use theme-video-preferences.json, static themes disable
+  # the mute/pause items.
+  $playlistTheme = [pscustomobject]@{
+    Theme = [pscustomobject]@{
+      id = 'preset-arina-hashimoto'
+      videoPlaylist = [pscustomobject]@{ enabled = $true }
+    }
+    VideoPath = $null
+  }
+  $playlistState = Get-DreamSkinActiveVideoPreference -ActiveTheme $playlistTheme -StateRoot $stateRoot
+  if (-not $playlistState.IsDynamic -or $playlistState.Mode -cne 'playlist') {
+    throw 'Playlist theme was not resolved as a dynamic playlist.'
+  }
+  $null = Set-DreamSkinActiveVideoPreference -ActiveTheme $playlistTheme -StateRoot $stateRoot -Muted $false -Paused $true
+  $playlistAfter = Get-DreamSkinActiveVideoPreference -ActiveTheme $playlistTheme -StateRoot $stateRoot
+  if ($playlistAfter.Muted -ne $false -or $playlistAfter.Paused -ne $true) {
+    throw 'Playlist mute/pause did not persist through the active-theme helper.'
+  }
+
+  $videoTheme = [pscustomobject]@{
+    Theme = [pscustomobject]@{ id = 'studio.video' }
+    VideoPath = (Join-Path $stateRoot 'background.mp4')
+  }
+  $videoState = Get-DreamSkinActiveVideoPreference -ActiveTheme $videoTheme -StateRoot $stateRoot
+  if (-not $videoState.IsDynamic -or $videoState.Mode -cne 'video') {
+    throw 'Skin API 2 theme was not resolved as a dynamic video theme.'
+  }
+  $null = Set-DreamSkinActiveVideoPreference -ActiveTheme $videoTheme -StateRoot $stateRoot -Muted $false
+  $null = Set-DreamSkinActiveVideoPreference -ActiveTheme $videoTheme -StateRoot $stateRoot -Paused $true
+  $videoAfter = Get-DreamSkinActiveVideoPreference -ActiveTheme $videoTheme -StateRoot $stateRoot
+  if ($videoAfter.Muted -ne $false -or $videoAfter.Paused -ne $true) {
+    throw 'Per-theme mute/pause did not persist through the active-theme helper.'
+  }
+  $videoPreferences = (Read-DreamSkinUtf8File -Path (Join-Path $stateRoot 'theme-video-preferences.json')) |
+    ConvertFrom-Json -ErrorAction Stop
+  if ($videoPreferences.themes.'studio.video'.muted -ne $false -or
+      $videoPreferences.themes.'studio.video'.paused -ne $true) {
+    throw 'Per-theme mute/pause was written to the wrong preference file.'
+  }
+
+  $staticTheme = [pscustomobject]@{
+    Theme = [pscustomobject]@{ id = 'static-theme' }
+    VideoPath = $null
+  }
+  $staticState = Get-DreamSkinActiveVideoPreference -ActiveTheme $staticTheme -StateRoot $stateRoot
+  if ($staticState.IsDynamic) { throw 'Static theme was reported as dynamic.' }
+  $staticAfter = Set-DreamSkinActiveVideoPreference -ActiveTheme $staticTheme -StateRoot $stateRoot -Muted $true
+  if ($staticAfter.IsDynamic) { throw 'Static theme setter changed dynamic state.' }
+
+  Write-Output 'PASS: video settings defaults, migration, validation, atomic persistence, corrupt-file protection and active dynamic theme resolution.'
 } finally {
   if (Test-Path -LiteralPath $stateRoot) {
     Remove-Item -LiteralPath $stateRoot -Recurse -Force

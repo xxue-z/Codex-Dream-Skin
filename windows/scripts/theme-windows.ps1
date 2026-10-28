@@ -654,6 +654,70 @@ function Get-DreamSkinEffectiveVideoDirectory {
   return (Join-Path $root 'videos')
 }
 
+function Get-DreamSkinActiveVideoPreference {
+  # Resolves the mute/pause state for whichever dynamic theme is active:
+  # the local playlist theme uses video-playlist.json, while a Skin API 2
+  # theme uses its per-theme entry in theme-video-preferences.json.
+  param(
+    [AllowNull()][object]$ActiveTheme,
+    [string]$StateRoot = (Join-Path $env:LOCALAPPDATA 'CodexDreamSkin')
+  )
+  $result = [pscustomobject]@{
+    IsDynamic = $false
+    Mode = ''
+    ThemeId = ''
+    Muted = $true
+    Paused = $false
+  }
+  if ($null -eq $ActiveTheme -or $null -eq $ActiveTheme.Theme) { return $result }
+  $isPlaylist = $false
+  if ($ActiveTheme.Theme.PSObject.Properties['videoPlaylist'] -and
+      $null -ne $ActiveTheme.Theme.videoPlaylist -and
+      $ActiveTheme.Theme.videoPlaylist.enabled -eq $true) {
+    $isPlaylist = $true
+  }
+  if ($isPlaylist) {
+    $playlistPreference = Get-DreamSkinPlaylistPreference -StateRoot $StateRoot
+    return [pscustomobject]@{
+      IsDynamic = $true
+      Mode = 'playlist'
+      ThemeId = "$($ActiveTheme.Theme.id)"
+      Muted = $playlistPreference.Muted
+      Paused = $playlistPreference.Paused
+    }
+  }
+  if ($ActiveTheme.VideoPath) {
+    $themeId = "$($ActiveTheme.Theme.id)"
+    $videoPreference = Get-DreamSkinThemeVideoPreference -ThemeId $themeId -StateRoot $StateRoot
+    return [pscustomobject]@{
+      IsDynamic = $true
+      Mode = 'video'
+      ThemeId = $themeId
+      Muted = $videoPreference.Muted
+      Paused = $videoPreference.Paused
+    }
+  }
+  return $result
+}
+
+function Set-DreamSkinActiveVideoPreference {
+  param(
+    [AllowNull()][object]$ActiveTheme,
+    [string]$StateRoot = (Join-Path $env:LOCALAPPDATA 'CodexDreamSkin'),
+    [Nullable[bool]]$Muted = $null,
+    [Nullable[bool]]$Paused = $null
+  )
+  $current = Get-DreamSkinActiveVideoPreference -ActiveTheme $ActiveTheme -StateRoot $StateRoot
+  if (-not $current.IsDynamic) { return $current }
+  if ($current.Mode -ceq 'playlist') {
+    Set-DreamSkinPlaylistPreference -StateRoot $StateRoot -Muted $Muted -Paused $Paused
+  } else {
+    $null = Set-DreamSkinThemeVideoPreference -ThemeId $current.ThemeId -StateRoot $StateRoot `
+      -Muted $Muted -Paused $Paused
+  }
+  return (Get-DreamSkinActiveVideoPreference -ActiveTheme $ActiveTheme -StateRoot $StateRoot)
+}
+
 function Open-DreamSkinVideosFolder {
   param([string]$StateRoot = (Join-Path $env:LOCALAPPDATA 'CodexDreamSkin'))
   $root = [System.IO.Path]::GetFullPath($StateRoot)
