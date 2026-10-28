@@ -453,56 +453,16 @@ try {
       $empty.Enabled = $false
       [void]$savedMenu.DropDownItems.Add($empty)
     } else {
-      $playlistThemeIds = @()
-      foreach ($saved in $savedThemes) {
-        $isPlaylist = $false
-        try {
-          $probeTheme = Read-DreamSkinTheme -ThemeDirectory $saved.Path -SkipImageMetadata
-          if ($probeTheme.Theme.id -ceq 'preset-arina-hashimoto' -and
-              $probeTheme.Theme.PSObject.Properties['videoPlaylist'] -and
-              $null -ne $probeTheme.Theme.videoPlaylist -and
-              $probeTheme.Theme.videoPlaylist.enabled -eq $true) {
-            $isPlaylist = $true
-          }
-        } catch {}
-        if (-not $isPlaylist) { continue }
-        $playlistThemeIds += "$($saved.Id)"
-        $playlistId = "$($saved.Id)"
-        $playlistName = $saved.Name
-        $playlistPath = $saved.Path
-        $themeMenu = [System.Windows.Forms.ToolStripMenuItem]::new($playlistName)
-        $applyAction = {
-          Start-DreamSkinVerifiedTrayApply -ThemeName $playlistName -ThemeDirectory $playlistPath
-        }.GetNewClosure()
-        $null = Add-DreamSkinTrayItem -Items $themeMenu.DropDownItems `
-          -Text (Get-DreamSkinTrayText -Key 'Apply') -Action $applyAction
-        [void]$savedMenu.DropDownItems.Add($themeMenu)
-      }
-      if ($playlistThemeIds.Count -gt 0) {
-        $savedThemes = @($savedThemes | Where-Object { $playlistThemeIds -notcontains "$($_.Id)" })
-      }
+      # Every saved theme applies directly from its own name; dynamic theme
+      # controls live in the top-level Dynamic themes menu instead of a
+      # per-theme submenu.
       foreach ($saved in $savedThemes) {
         $savedPath = $saved.Path
         $savedName = $saved.Name
-        $isDynamic = $false
-        try {
-          $savedTheme = Read-DreamSkinTheme -ThemeDirectory $savedPath -SkipImageMetadata
-          $isDynamic = [bool]$savedTheme.VideoPath
-        } catch {}
-        if (-not $isDynamic) {
-          $savedAction = {
-            Start-DreamSkinVerifiedTrayApply -ThemeName $savedName -ThemeDirectory $savedPath
-          }.GetNewClosure()
-          $null = Add-DreamSkinTrayItem -Items $savedMenu.DropDownItems -Text $savedName -Action $savedAction
-          continue
-        }
-        $themeMenu = [System.Windows.Forms.ToolStripMenuItem]::new($savedName)
         $savedAction = {
           Start-DreamSkinVerifiedTrayApply -ThemeName $savedName -ThemeDirectory $savedPath
         }.GetNewClosure()
-        $null = Add-DreamSkinTrayItem -Items $themeMenu.DropDownItems `
-          -Text (Get-DreamSkinTrayText -Key 'Apply') -Action $savedAction
-        [void]$savedMenu.DropDownItems.Add($themeMenu)
+        $null = Add-DreamSkinTrayItem -Items $savedMenu.DropDownItems -Text $savedName -Action $savedAction
       }
     }
     [void]$menu.Items.Add($savedMenu)
