@@ -53,6 +53,14 @@ case "${1:-}" in
     [ -d "$target" ] || { printf 'Videos folder not found\n' >&2; exit 1; }
     /usr/bin/open "$target"
     ;;
+  video-state)
+    muted="${2:-true}"
+    paused="${3:-false}"
+    case "$muted" in true|false) ;; *) printf 'Muted must be true or false\n' >&2; exit 1 ;; esac
+    case "$paused" in true|false) ;; *) printf 'Paused must be true or false\n' >&2; exit 1 ;; esac
+    ensure_node_runtime || exit 1
+    "$NODE" "$SCRIPT_DIR/injector.mjs" --video-state --muted "$muted" --paused "$paused" >/dev/null 2>&1 || true
+    ;;
   apply-veil)
     value="${2:-}"
     case "$value" in ''|*[!0-9]*) printf 'Veil must be 0-100\n' >&2; exit 1 ;; esac
@@ -64,7 +72,7 @@ case "${1:-}" in
     /bin/date +%s > "$STATE_ROOT/playlist-rescan.request"
     ;;
   *)
-    printf 'Usage: playlist-macos.sh state|set|poster|restore-poster|open-videos|rescan|apply-veil\n' >&2
+    printf 'Usage: playlist-macos.sh state|set|poster|restore-poster|open-videos|rescan|apply-veil|video-state\n' >&2
     exit 1
     ;;
 esac

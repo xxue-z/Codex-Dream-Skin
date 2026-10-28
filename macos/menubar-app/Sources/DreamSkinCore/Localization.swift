@@ -73,7 +73,9 @@ public struct DreamSkinCopy: Sendable {
     case changeBackground
     case videoMute
     case videoPause
-    case videoSettings
+    case dynamicThemes
+    case dynamicThemesActive
+    case dynamicThemesInactive
     case videoSettingsAutoDiscover
     case videoSettingsInterval
     case videoSettingsSeconds
@@ -241,7 +243,9 @@ public struct DreamSkinCopy: Sendable {
     case .changeBackground: return chinese ? "换一张背景图…" : "Choose background image…"
     case .videoMute: return chinese ? "静音" : "Mute"
     case .videoPause: return chinese ? "暂停" : "Pause"
-    case .videoSettings: return chinese ? "视频设置" : "Video settings"
+    case .dynamicThemes: return chinese ? "动态主题" : "Dynamic themes"
+    case .dynamicThemesActive: return chinese ? "当前主题：%@" : "Active theme: %@"
+    case .dynamicThemesInactive: return chinese ? "当前主题不是动态主题" : "The active theme has no dynamic background"
     case .videoSettingsAutoDiscover: return chinese ? "自动发现新视频" : "Auto-detect new videos"
     case .videoSettingsInterval: return chinese ? "检测间隔" : "Check interval"
     case .videoSettingsSeconds: return chinese ? "%d 秒" : "%d s"

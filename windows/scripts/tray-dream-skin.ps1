@@ -453,8 +453,6 @@ try {
       $empty.Enabled = $false
       [void]$savedMenu.DropDownItems.Add($empty)
     } else {
-      $activeId = ''
-      try { $activeId = "$((Read-DreamSkinTheme -ThemeDirectory $paths.Active -SkipImageMetadata).Theme.id)" } catch {}
       $playlistThemeIds = @()
       foreach ($saved in $savedThemes) {
         $isPlaylist = $false
@@ -478,36 +476,6 @@ try {
         }.GetNewClosure()
         $null = Add-DreamSkinTrayItem -Items $themeMenu.DropDownItems `
           -Text (Get-DreamSkinTrayText -Key 'Apply') -Action $applyAction
-        [void]$themeMenu.DropDownItems.Add([System.Windows.Forms.ToolStripSeparator]::new())
-        $playlistPreference = Get-DreamSkinPlaylistPreference -StateRoot $StateRoot
-        $muteAction = {
-          try {
-            $current = Get-DreamSkinPlaylistPreference -StateRoot $StateRoot
-            $next = -not $current.Muted
-            Set-DreamSkinPlaylistPreference -StateRoot $StateRoot -Muted $next
-            if ($activeId -ceq $playlistId) {
-              Set-DreamSkinTrayVideoState -Muted $next -Paused $current.Paused
-            }
-            Rebuild-DreamSkinTrayMenu
-          } catch { Show-DreamSkinTrayError -Message $_.Exception.Message }
-        }.GetNewClosure()
-        $null = Add-DreamSkinTrayItem -Items $themeMenu.DropDownItems `
-          -Text (Get-DreamSkinTrayText -Key 'VideoMute') -Action $muteAction `
-          -Checked $playlistPreference.Muted
-        $pauseAction = {
-          try {
-            $current = Get-DreamSkinPlaylistPreference -StateRoot $StateRoot
-            $next = -not $current.Paused
-            Set-DreamSkinPlaylistPreference -StateRoot $StateRoot -Paused $next
-            if ($activeId -ceq $playlistId) {
-              Set-DreamSkinTrayVideoState -Muted $current.Muted -Paused $next
-            }
-            Rebuild-DreamSkinTrayMenu
-          } catch { Show-DreamSkinTrayError -Message $_.Exception.Message }
-        }.GetNewClosure()
-        $null = Add-DreamSkinTrayItem -Items $themeMenu.DropDownItems `
-          -Text (Get-DreamSkinTrayText -Key 'VideoPause') -Action $pauseAction `
-          -Checked $playlistPreference.Paused
         [void]$savedMenu.DropDownItems.Add($themeMenu)
       }
       if ($playlistThemeIds.Count -gt 0) {
@@ -516,7 +484,6 @@ try {
       foreach ($saved in $savedThemes) {
         $savedPath = $saved.Path
         $savedName = $saved.Name
-        $savedId = "$($saved.Id)"
         $isDynamic = $false
         try {
           $savedTheme = Read-DreamSkinTheme -ThemeDirectory $savedPath -SkipImageMetadata
@@ -535,40 +502,6 @@ try {
         }.GetNewClosure()
         $null = Add-DreamSkinTrayItem -Items $themeMenu.DropDownItems `
           -Text (Get-DreamSkinTrayText -Key 'Apply') -Action $savedAction
-        [void]$themeMenu.DropDownItems.Add([System.Windows.Forms.ToolStripSeparator]::new())
-        $preference = Get-DreamSkinThemeVideoPreference -ThemeId $savedId -StateRoot $StateRoot
-        $muteText = Get-DreamSkinTrayText -Key 'VideoMute'
-        $muteAction = {
-          try {
-            $current = Get-DreamSkinThemeVideoPreference -ThemeId $savedId -StateRoot $StateRoot
-            $nextMuted = -not $current.Muted
-            $null = Set-DreamSkinThemeVideoPreference -ThemeId $savedId `
-              -Muted $nextMuted -StateRoot $StateRoot
-            if ($activeId -ceq $savedId) {
-              Set-DreamSkinTrayVideoState -Muted $nextMuted -Paused $current.Paused
-            }
-          } catch {
-            Show-DreamSkinTrayError -Message $_.Exception.Message
-          }
-        }.GetNewClosure()
-        $null = Add-DreamSkinTrayItem -Items $themeMenu.DropDownItems `
-          -Text $muteText -Action $muteAction -Checked $preference.Muted
-        $pauseText = Get-DreamSkinTrayText -Key 'VideoPause'
-        $pauseAction = {
-          try {
-            $current = Get-DreamSkinThemeVideoPreference -ThemeId $savedId -StateRoot $StateRoot
-            $nextPaused = -not $current.Paused
-            $null = Set-DreamSkinThemeVideoPreference -ThemeId $savedId `
-              -Paused $nextPaused -StateRoot $StateRoot
-            if ($activeId -ceq $savedId) {
-              Set-DreamSkinTrayVideoState -Muted $current.Muted -Paused $nextPaused
-            }
-          } catch {
-            Show-DreamSkinTrayError -Message $_.Exception.Message
-          }
-        }.GetNewClosure()
-        $null = Add-DreamSkinTrayItem -Items $themeMenu.DropDownItems `
-          -Text $pauseText -Action $pauseAction -Checked $preference.Paused
         [void]$savedMenu.DropDownItems.Add($themeMenu)
       }
     }
@@ -576,8 +509,41 @@ try {
 
     $videoSettings = Get-DreamSkinVideoSettings -StateRoot $StateRoot
     $videoSettingsItem = [System.Windows.Forms.ToolStripMenuItem]::new(
-      (Get-DreamSkinTrayText -Key 'VideoSettings')
+      (Get-DreamSkinTrayText -Key 'DynamicThemes')
     )
+    $activeVideoPreference = Get-DreamSkinActiveVideoPreference -ActiveTheme $active -StateRoot $StateRoot
+    $activeThemeLabel = if ($activeVideoPreference.IsDynamic -and $null -ne $active -and $active.Theme.name) {
+      Get-DreamSkinTrayText -Key 'DynamicThemesActive' -FormatArguments @($active.Theme.name)
+    } else {
+      Get-DreamSkinTrayText -Key 'DynamicThemesInactive'
+    }
+    $null = Add-DreamSkinTrayItem -Items $videoSettingsItem.DropDownItems `
+      -Text $activeThemeLabel -Action $null -Enabled $false
+    $activeMuteAction = {
+      try {
+        if (-not $activeVideoPreference.IsDynamic) { return }
+        $updated = Set-DreamSkinActiveVideoPreference -ActiveTheme $active -StateRoot $StateRoot `
+          -Muted (-not $activeVideoPreference.Muted)
+        Set-DreamSkinTrayVideoState -Muted $updated.Muted -Paused $updated.Paused
+        Rebuild-DreamSkinTrayMenu
+      } catch { Show-DreamSkinTrayError -Message $_.Exception.Message }
+    }.GetNewClosure()
+    $null = Add-DreamSkinTrayItem -Items $videoSettingsItem.DropDownItems `
+      -Text (Get-DreamSkinTrayText -Key 'VideoMute') -Action $activeMuteAction `
+      -Checked $activeVideoPreference.Muted -Enabled $activeVideoPreference.IsDynamic
+    $activePauseAction = {
+      try {
+        if (-not $activeVideoPreference.IsDynamic) { return }
+        $updated = Set-DreamSkinActiveVideoPreference -ActiveTheme $active -StateRoot $StateRoot `
+          -Paused (-not $activeVideoPreference.Paused)
+        Set-DreamSkinTrayVideoState -Muted $updated.Muted -Paused $updated.Paused
+        Rebuild-DreamSkinTrayMenu
+      } catch { Show-DreamSkinTrayError -Message $_.Exception.Message }
+    }.GetNewClosure()
+    $null = Add-DreamSkinTrayItem -Items $videoSettingsItem.DropDownItems `
+      -Text (Get-DreamSkinTrayText -Key 'VideoPause') -Action $activePauseAction `
+      -Checked $activeVideoPreference.Paused -Enabled $activeVideoPreference.IsDynamic
+    [void]$videoSettingsItem.DropDownItems.Add([System.Windows.Forms.ToolStripSeparator]::new())
     $videoFolderLabel = if ($videoSettings.VideoDirectory) {
       $videoSettings.VideoDirectory
     } else {
