@@ -652,23 +652,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
     if themes.isEmpty {
       addDisabledItem(copy.text(.noSavedThemes), to: submenu)
     } else {
+      // Every saved theme applies directly from its own name; dynamic theme
+      // controls live in the top-level Dynamic themes menu.
       for theme in themes {
-        if theme.playlistEnabled {
-          let themeRoot = NSMenuItem(title: theme.name, action: nil, keyEquivalent: "")
-          let themeMenu = NSMenu(title: theme.name)
-          themeMenu.autoenablesItems = false
-          let applyItem = addActionItem(
-            copy.text(.apply),
-            action: #selector(switchSavedTheme(_:)),
-            enabled: enabled,
-            to: themeMenu
-          )
-          applyItem.representedObject = theme.id
-          if theme.id == snapshot.themeID { applyItem.state = .on }
-          themeRoot.submenu = themeMenu
-          submenu.addItem(themeRoot)
-          continue
-        }
         let item = addActionItem(
           theme.name,
           action: #selector(switchSavedTheme(_:)),
@@ -802,8 +788,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
         return nil
       }
       let rawName = value["name"] as? String ?? id
-      let playlistEnabled = id == playlistThemeID
-      return SavedThemeOption(id: id, name: cleanMenuText(rawName), playlistEnabled: playlistEnabled)
+      return SavedThemeOption(id: id, name: cleanMenuText(rawName))
     }
     let deduplicated = deduplicatedSavedThemes(options, currentThemeID: snapshot.themeID).sorted {
       $0.name.localizedStandardCompare($1.name) == .orderedAscending

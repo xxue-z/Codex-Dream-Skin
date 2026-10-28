@@ -3,12 +3,10 @@ import Foundation
 public struct SavedThemeOption: Equatable, Sendable {
   public let id: String
   public let name: String
-  public let playlistEnabled: Bool
 
-  public init(id: String, name: String, playlistEnabled: Bool = false) {
+  public init(id: String, name: String) {
     self.id = id
     self.name = name
-    self.playlistEnabled = playlistEnabled
   }
 }
 
