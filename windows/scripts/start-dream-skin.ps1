@@ -579,6 +579,11 @@ try {
     $verifyDeadline = (Get-Date).AddSeconds(90)
     $forceInjectedAfterVerifyFailure = $false
     while ($true) {
+      # A relaunched Codex can remain minimized on Windows even after package
+      # activation. Restore the real top-level window before every probe so
+      # document.visibilityState does not stay "hidden" and abort the apply.
+      try { [void](Invoke-DreamSkinCodexWindowActivation -Codex $codex) } catch {}
+      Start-Sleep -Milliseconds 250
       $verify = Invoke-DreamSkinNative -FilePath $node.Path -ArgumentList @(
         $Injector, '--verify', '--port', "$Port",
         '--browser-id', $cdpIdentity.BrowserId, '--theme-dir', $themePaths.Active,

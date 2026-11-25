@@ -1570,11 +1570,47 @@ function Invoke-DreamSkinCodexWindowActivation {
   param([Parameter(Mandatory = $true)][object]$Codex)
   $processes = @(Get-DreamSkinCodexProcesses -Codex $Codex)
   if ($processes.Count -eq 0) { return $false }
-  $shell = New-Object -ComObject WScript.Shell
-  foreach ($process in $processes) {
-    try {
-      if ($shell.AppActivate([int]$process.ProcessId)) { return $true }
-    } catch {}
+  if (-not ('DreamSkinNativeWindowActivation' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
+
+public static class DreamSkinNativeWindowActivation {
+  private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+  [DllImport("user32.dll")] private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+  [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr hWnd);
+  [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr hWnd);
+  [DllImport("user32.dll")] private static extern int GetWindowTextLength(IntPtr hWnd);
+  [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+  [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr hWnd, int command);
+  [DllImport("user32.dll")] private static extern bool BringWindowToTop(IntPtr hWnd);
+  [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+  public static bool ActivateAny(uint[] processIds) {
+    var wanted = new HashSet<uint>(processIds);
+    bool activated = false;
+    EnumWindows((hWnd, lParam) => {
+      uint processId;
+      GetWindowThreadProcessId(hWnd, out processId);
+      if (!wanted.Contains(processId) || !IsWindowVisible(hWnd)) return true;
+      if (GetWindowTextLength(hWnd) <= 0) return true;
+      ShowWindow(hWnd, IsIconic(hWnd) ? 9 : 5);
+      BringWindowToTop(hWnd);
+      SetForegroundWindow(hWnd);
+      activated = true;
+      return false;
+    }, IntPtr.Zero);
+    return activated;
   }
-  return $false
+}
+'@
+  }
+  try {
+    $processIds = [uint32[]]@($processes | ForEach-Object { [uint32]$_.ProcessId })
+    return [DreamSkinNativeWindowActivation]::ActivateAny($processIds)
+  } catch {
+    return $false
+  }
 }

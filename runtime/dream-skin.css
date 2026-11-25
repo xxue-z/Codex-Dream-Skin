@@ -1829,3 +1829,20 @@ html[data-dream-skin="active"] [role="dialog"]:has([data-testid="image-preview-d
   background: transparent !important;
 }
 
+/* Codex 26.1120 tags the full-width assistant wrapper with
+   data-local-conversation-final-assistant. Keep the public message part so
+   themes can still color message text, but never let a community message
+   surface turn the entire transcript into an opaque card. User bubbles keep
+   their own background. This stays in the community layer because theme
+   declarations are emitted there with !important. */
+@layer dreamskin-community {
+  html[data-dream-skin="active"]
+    [data-ds-part="message"][data-local-conversation-final-assistant] {
+    background-color: transparent !important;
+    background-image: none !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+  }
+}

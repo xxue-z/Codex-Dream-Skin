@@ -1283,7 +1283,8 @@ try {
   $css = Read-DreamSkinUtf8File -Path (Join-Path $Root 'assets\dream-skin.css')
   foreach ($requiredCss in @(
     'background-image: var(--dream-skin-art)',
-    'main:is(.main-surface, [data-app-shell-main-surface], [class*="_MainContentSurface_"]) > header:is(.app-header-tint, [data-app-shell-header-edge-scroll], [class*="_Header_"])',
+    'main:is(.main-surface, [data-app-shell-main-surface], [class*="_MainContentSurface_"]) > header:is(.app-header-tint, [data-app-shell-header-edge-scroll], [data-app-shell-titlebar], [class*="_Header_"])',
+    '[data-ds-part="message"][data-local-conversation-final-assistant]',
     '[class~="group/application-menu-top-bar"]',
     '.app-shell-main-content-top-fade',
     'data-app-shell-main-content-top-fade',
@@ -1468,6 +1469,13 @@ try {
   }
   if (-not (Get-Command Invoke-DreamSkinCodexWindowActivation -CommandType Function -ErrorAction SilentlyContinue)) {
     throw 'The Windows Codex activation helper is missing from common-windows.ps1.'
+  }
+  if (-not $commonSource.Contains('ShowWindow') -or -not $commonSource.Contains('SetForegroundWindow')) {
+    throw 'The Windows Codex activation helper must restore the native top-level window instead of relying only on AppActivate.'
+  }
+  if ($startSource.IndexOf('$verifyDeadline') -lt 0 -or
+    $startSource.IndexOf('Invoke-DreamSkinCodexWindowActivation -Codex $codex') -lt $startSource.IndexOf('$verifyDeadline')) {
+    throw 'Start must restore the Codex window inside the verification retry loop.'
   }
   if (-not $commonSource.Contains('Stop-Process -InputObject $processHandle -Force') -or
     -not $commonSource.Contains('[void]$processHandle.WaitForExit(15000)') -or
